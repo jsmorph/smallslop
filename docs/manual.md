@@ -1,21 +1,23 @@
 # Smallslop Manual
 
 Smallslop is a Smalltalk-like language implemented as a bytecode interpreter
-in JavaScript.  The same ES modules run in Node and browsers.  Classes,
-method versions, lexical environments, and call frames are runtime objects.
-The debugger inspects, steps, edits, and retries execution through
-JavaScript and JSON APIs.
+in JavaScript.  The same ES modules run in Node and browsers.  Classes, method
+versions, lexical environments, and call frames are runtime objects.  The
+debugger inspects, steps, edits, and retries execution through JavaScript and
+JSON APIs.
 
-This manual covers the language, classes, processes, the debugger,
-embedding, the browser tools in `ui/`, and the server runtime in
-`server/world.mjs`.  [Agent and Web Server](agent.md) covers the Web server,
-page sessions, and the agent, and [Components](components.md) covers
-installed JavaScript components.  The [README](../README.md#setup-and-commands)
-lists the setup and commands.
+This manual covers the language, classes, processes, the debugger, embedding,
+the browser tools in `ui/`, and the server runtime in `server/world.mjs`.
+[Agent and Web Server](agent.md) covers the Web server, page sessions, and the
+agent, and [Components](components.md) covers installed JavaScript components.
+The [README](../README.md#setup-and-commands) lists the setup and commands.
 
 ## Evaluating an expression in Node
 
-This command prints `42n`, Node's display of an exact integer:
+`evaluate` compiles source and creates a paused process.  `run` executes the
+process and returns a state record, and a completed process's `result` is a
+JavaScript value.  This command prints `42n`, Node's display of an exact
+integer:
 
 ```sh
 node --input-type=module <<'JS'
@@ -30,15 +32,12 @@ console.log(state.result);
 JS
 ```
 
-`evaluate` compiles the source and creates a paused process.  `run` executes
-it and returns a state record.  The completed process's `result` is a
-JavaScript value.  The default receiver for an evaluated expression is `nil`.
-
-The JavaScript examples below are independent Node ES modules, except the
-browser-console example.  Each can be saved in a `.mjs` file at the repository
-root and run with `node`, or passed to `node --input-type=module` on standard
-input.  Smallslop examples marked `smalltalk` are source strings for
-`evaluate`, unless described as method definitions.
+The default receiver for an evaluated expression is `nil`.  The JavaScript
+examples below are independent Node ES modules, except the browser-console
+example.  Each can be saved in a `.mjs` file at the repository root and run
+with `node`, or passed to `node --input-type=module` on standard input.
+Smallslop examples marked `smalltalk` are source strings for `evaluate`,
+unless described as method definitions.
 
 ## Source language
 
@@ -61,8 +60,8 @@ have reserved meanings.
 
 Integer arithmetic preserves exact results.  Arithmetic and ordering require
 operands of the same numeric class.  `asFloat` converts an Integer to a Float
-and can lose precision.  JavaScript callers pass `42n` for an Integer and
-`42` for a Float.
+and can lose precision.  JavaScript callers pass `42n` for an Integer and `42`
+for a Float.
 
 | Expression | Result |
 | --- | --- |
@@ -82,8 +81,9 @@ returns the float's integer part as an Integer and rejects infinity and NaN.
 
 ### Messages and methods
 
-A message has a receiver, a selector, and zero or more arguments.  The selector
-identifies the method to look up.
+A message has a receiver, a selector, and zero or more arguments.  The
+selector identifies the method to look up.  Lookup starts at the receiver's
+class and follows the superclass chain.
 
 | Message form | Example | Selector |
 | --- | --- | --- |
@@ -116,11 +116,11 @@ add: first to: second
   ^sum
 ```
 
-Periods separate statements.  A final period is allowed.  A method returns
-its receiver unless it executes `^expression`.  The compiler rejects a
-statement after a return in the same statement sequence.  A method can send
-other messages through `self`.  A `super` send starts lookup at the superclass
-of the class that defined the current method, while keeping the receiver.
+Periods separate statements.  A final period is allowed.  A method returns its
+receiver unless it executes `^expression`.  The compiler rejects a statement
+after a return in the same statement sequence.  A method can send other
+messages through `self`.  A `super` send starts lookup at the superclass of
+the class that defined the current method, while keeping the receiver.
 
 ### Bindings and blocks
 
@@ -160,9 +160,9 @@ different process, suspends with an error.
 ### Control flow and library methods
 
 Conditions and loops use message sends.  A Boolean conditional invokes the
-selected block and returns its result.  A one-branch conditional returns
-`nil` when its branch is skipped.  `and:` and `or:` evaluate their argument
-block only when its result is needed.
+selected block and returns its result.  A one-branch conditional returns `nil`
+when its branch is skipped.  `and:` and `or:` evaluate their argument block
+only when its result is needed.
 
 This expression returns Integer `120`:
 
@@ -193,18 +193,20 @@ frame and yields when its process exhausts the instruction budget.
 
 The initial `=` sends `==`, which uses JavaScript strict equality.  Distinct
 ordinary objects compare by identity.  Primitive values compare by their
-JavaScript value and type, so `1 = 1.0` is false.  User classes can replace `=`.
+JavaScript value and type, so `1 = 1.0` is false.  User classes can replace
+`=`.
 
 ## Classes and method installation
 
-`defineClass` creates an ordinary class.  Its default superclass is `Object`.
-Ordinary classes support `new`.  `new` sent to a value class, such as
-`Integer` or `String`, suspends with an error, because its instances come
-from literals and host values.
-Its optional `category` names the browser group and defaults to `Unclassified`.
-Slots include inherited slots and begin as `nil`.  Slot names must be distinct
-across the inheritance chain.  `newObject` allocates an instance.  The source
-message `Counter new` performs the same allocation.
+`defineClass` creates an ordinary class.  Its default superclass is `Object`,
+and its optional `category` names the browser group and defaults to
+`Unclassified`.  Slots include inherited slots and begin as `nil`.  Slot names
+must be distinct across the inheritance chain.  `newObject` allocates an
+instance, and the source message `Counter new` performs the same allocation.
+`new` succeeds for `Object` and classes defined with `defineClass`.  Sent to
+any other built-in class, such as `Integer`, `String`, `Block`, or `Class`, or
+to a subclass of one, it suspends with an error, because the instances of
+those classes come from literals, blocks, and host values.
 
 ```js
 import { Runtime } from './src/index.js';
@@ -221,8 +223,8 @@ console.log(runtime.run(runtime.start(counter, 'increment')).result);
 console.log(runtime.run(runtime.start(counter, 'count')).result);
 ```
 
-The output is `1n` on each line.  Allocation initializes slots to `nil`.
-The example sends `initialize` as a separate operation.
+The output is `1n` on each line.  Allocation initializes slots to `nil`.  The
+example sends `initialize` as a separate operation.
 
 Inheritance and `super` sends work with source methods:
 
@@ -238,8 +240,8 @@ console.log(runtime.run(runtime.evaluate('Child new answer')).result);
 ```
 
 The result is `42n`.  `installSource` returns a method object with an ID,
-owner, selector, arity, and compiled `code`.  `lookup(klass, selector)` searches
-the class and its ancestors and returns a method or `null`.
+owner, selector, arity, and compiled `code`.  `lookup(klass, selector)`
+searches the class and its ancestors and returns a method or `null`.
 
 `installSource`, `install`, and `primitive` accept an optional final options
 object with a `protocol` name.  Replacement preserves the current protocol
@@ -247,8 +249,8 @@ when that option is omitted.  A new selector defaults to `unclassified`.
 Method descriptions distinguish `source`, `bytecode`, and `primitive` forms.
 
 `installSource` also accepts `expectedMethodId` and `selector`.  The expected
-ID must match the installed version.  `null` requires an unused selector.
-The optional selector requires the source to retain that selector.  Failed
+ID must match the installed version.  `null` requires an unused selector.  The
+optional selector requires the source to retain that selector.  Failed
 validation leaves the installed method unchanged.
 
 Installing the same selector creates a new immutable method version.  New
@@ -294,8 +296,8 @@ holds the return value when `status` is `completed`.
 | `return` | The process completed |
 | `cancelled` | The process was cancelled |
 
-`run(id, {budget: 10000})` executes up to 10,000 bytecodes by default.
-The budget must be a positive safe integer.  A host can schedule processes in
+`run(id, {budget: 10000})` executes up to 10,000 bytecodes by default.  The
+budget must be a positive safe integer.  A host can schedule processes in
 successive runs and yield between them:
 
 ```js
@@ -319,13 +321,13 @@ if (state.stop.reason === 'error') throw state.stop.error;
 console.log(state.status, state.result);
 ```
 
-The output is `completed 5050n`.  Instruction budgets count bytecodes.
-A synchronous primitive finishes before the interpreter checks the next
+The output is `completed 5050n`.  Instruction budgets count bytecodes.  A
+synchronous primitive finishes before the interpreter checks the next
 instruction.  Pausing one process leaves other processes available to the
 host.  The runtime retains process records in `runtime.processes` until
-`dispose(id)` removes a completed or cancelled process.  A paused process
-must be cancelled before disposal.  Disposal releases the runtime's reference
-to that record.  A result retained by application code remains usable.
+`dispose(id)` removes a completed or cancelled process.  A paused process must
+be cancelled before disposal.  Disposal releases the runtime's reference to
+that record.  A result retained by application code remains usable.
 
 ### Frames, inspection, and stepping
 
@@ -379,10 +381,10 @@ breakpoint.  `run` clears the stepping request and continues execution.
 
 A lexical edit affects later reads of that binding.  Previously evaluated
 values remain on the operand stack.  For example, changing a divisor after
-division fails leaves the pending argument unchanged.  `setSendOperand`
-can replace that argument before retry without repeating prior expressions.
-The receiver of a super send remains the frame's receiver.  `retry` executes
-the failed instruction before checking its breakpoint again.
+division fails leaves the pending argument unchanged.  `setSendOperand` can
+replace that argument before retry without repeating prior expressions.  The
+receiver of a super send remains the frame's receiver.  `retry` executes the
+failed instruction before checking its breakpoint again.
 
 ### Editing a paused frame
 
@@ -403,21 +405,23 @@ console.log(runtime.run(processId).result);
 runtime.clearBreakpoint(breakpointId);
 ```
 
-The output is `breakpoint 3n`, followed by `42n`.
+The output is `breakpoint 3n`, followed by `42n`.  The breakpoint stops the
+process before the method's first instruction.  `setVariable` replaces the
+argument before the multiplication reads it.
 
-`evaluate(source, {processId, frameId})` creates a separate process that shares
-the paused frame's receiver and lexical bindings.  Omitting `frameId` selects
-the current frame.  Running the evaluation leaves the original process paused.
-The evaluation has its own return activation.  Its local declarations can
-shadow the paused frame's bindings.
+`evaluate(source, {processId, frameId})` creates a separate process that
+shares the paused frame's receiver and lexical bindings.  Omitting `frameId`
+selects the current frame.  Running the evaluation leaves the original process
+paused.  The evaluation has its own return activation.  Its local declarations
+can shadow the paused frame's bindings.
 
 ### Repairing a failed send
 
 Syntax and name-resolution errors throw `SyntaxError` with `position`, `line`,
-and `column`.  The position is a zero-based JavaScript string offset.  Line and
-column numbers start at one.  Invalid debugger operations throw to their
-JavaScript caller.  Execution errors suspend the process with
-`stop.reason === 'error'`.
+and `column`.  The position is a zero-based JavaScript string offset.  Line
+and column numbers start at one.  Invalid debugger operations throw to their
+JavaScript caller.  Execution errors suspend the process with `stop.reason ===
+'error'`.
 
 A missing method produces `MessageNotUnderstood` with `receiver`, `selector`,
 and `arguments`.  The failed send preserves its instruction position and
@@ -488,8 +492,10 @@ completed
 {"kind":"integer","value":"9007199254740993"}
 ```
 
-An adapter's `value(value)` method encodes a supported runtime value.
-Its `decode(record)` method restores that value within the adapter.
+An adapter's `value(value)` method encodes a supported runtime value.  Its
+`decode(record)` method restores that value within the adapter.  Encoded
+records are plain JSON, so a transport can pass them without further
+conversion.
 
 | Value | Encoding |
 | --- | --- |
@@ -539,10 +545,10 @@ instance's slots, a class's own methods and superclass, a block's captures and
 home activation, or an array's items.  Array inspection defaults to offset
 zero and a limit of 100.  The maximum limit is 1,000.
 
-Host object inspection reports own string-named properties with encoded
-values or accessor descriptions.  It reads property descriptors without
-invoking getters.  Host arrays and typed arrays report indexed pages, including
-absent elements.  JavaScript proxies can execute their reflection traps.
+Host object inspection reports own string-named properties with encoded values
+or accessor descriptions.  It reads property descriptors without invoking
+getters.  Host arrays and typed arrays report indexed pages, including absent
+elements.  JavaScript proxies can execute their reflection traps.
 `debugger.describe(value, options)` also accepts primitive runtime values.
 
 The adapter retains an object until `release` receives its handle ID.
@@ -575,7 +581,9 @@ console.log(paused.stop.reason);
 console.log(frame.source.slice(frame.position.start, frame.position.end));
 ```
 
-The output is `breakpoint`, followed by `42`.
+The output is `breakpoint`, followed by `42`.  `method.codes` lists the
+method's code and the block's code.  The breakpoint at `pc` 0 stops before the
+block's first instruction.
 
 ## Embedding and bytecode
 
@@ -614,8 +622,8 @@ preserving their host identity.  `host.unwrap(value)` recovers the original
 value.  Host Numbers remain Floats.  Integer conversion uses `asFloat` when
 the called API requires a Number.
 
-JavaScript `undefined` has a distinct host wrapper whose `isUndefined`
-returns `true`.  Property names use strings.  Host symbols remain unsupported.
+JavaScript `undefined` has a distinct host wrapper whose `isUndefined` returns
+`true`.  Property names use strings.  Host symbols remain unsupported.
 Smallslop objects, classes, and blocks passed to `host.value` retain their
 runtime identity.
 
@@ -629,8 +637,8 @@ runtime identity.
 | `on: eventType do: block` | Register an event callback in the current host scope |
 | `isUndefined` | Test for the wrapped JavaScript undefined value |
 
-Host call results pass through the same value conversion.  Exceptions pause
-at the send.  A promise-returning call waits for its result.  A property read
+Host call results pass through the same value conversion.  Exceptions pause at
+the send.  A promise-returning call waits for its result.  A property read
 returns its value, including a wrapped promise if the property contains one.
 
 ### Asynchronous operations
@@ -655,49 +663,47 @@ runner.close();
 The output is `waiting`, followed by `completed 42n`.  `whenReady` resolves
 after success, rejection, or cancellation changes the process state.  A
 successful call advances past the send.  A rejected call pauses with an error
-at the same send and keeps its operands.  `retry` invokes it again, so the host
-operation can repeat effects.  Earlier Smallslop instructions keep their
+at the same send and keeps its operands.  `retry` invokes it again, so the
+host operation can repeat effects.  Earlier Smallslop instructions keep their
 effects.  Stepping stops at the requested point after a call completes.
 Pending host work retains its runtime until completion or cancellation, and
-cancellation releases that reference even if the host promise remains
-pending.
+cancellation releases that reference even if the host promise remains pending.
 
-A host method or primitive can return
-`new HostOperation(promise, {cancel: () => controller.abort()})` to support
-cancellation.  Cancellation invalidates the wait before invoking the handler
-and ignores late success or rejection.  Cancellation-handler errors reach
-the caller after the process becomes cancelled.  A plain promise supplies
-no host cancellation handler.  In that case, cancelling the process prevents
-resumption while the host work follows its own lifetime.
+A host method or primitive can return `new HostOperation(promise, {cancel: ()
+=> controller.abort()})` to support cancellation.  Cancellation invalidates
+the wait before invoking the handler and ignores late success or rejection.
+Cancellation-handler errors reach the caller after the process becomes
+cancelled.  A plain promise supplies no host cancellation handler.  In that
+case, cancelling the process prevents resumption while the host work follows
+its own lifetime.
 
 ### Scheduling and callback ownership
 
 `new ProcessRunner(runtime, {budget: 1000, onChange})` schedules one bounded
-interpreter batch per timer task.  `runner.follow(processId)` continues a
-new process, a budget stop, or a waiting operation.  It stops automatic
-execution at a breakpoint, error, completed step, explicit pause, or process
-completion.  `onChange(processId)` reports each batch or asynchronous state
-change.  After a debugger command, calling `follow` updates scheduling from
-the resulting process state.  `runner.forget(id)` removes scheduling for one
-process.  `runner.close()` stops the runner's scheduled work.
+interpreter batch per timer task.  `runner.follow(processId)` continues a new
+process, a budget stop, or a waiting operation.  It stops automatic execution
+at a breakpoint, error, completed step, explicit pause, or process completion.
+`onChange(processId)` reports each batch or asynchronous state change.  After
+a debugger command, calling `follow` updates scheduling from the resulting
+process state.  `runner.forget(id)` removes scheduling for one process.
+`runner.close()` stops the runner's scheduled work.
 
 `host.scope()` creates an owner for listeners and processes.
 `scope.start(receiver, selector, args)` creates and schedules a process.
 `runtime.start` and `runtime.evaluate` also accept `{scope}` in their options.
 Frame evaluation inherits its selected process's scope.  A callback block
-accepts zero arguments or one wrapped Event argument.  Each event queues a
-new process.  Its captured bindings remain shared after the registering
-method returns.  Event callbacks execute after dispatch, so synchronous
-event cancellation belongs in host code.
+accepts zero arguments or one wrapped Event argument.  Each event queues a new
+process.  Its captured bindings remain shared after the registering method
+returns.  Event callbacks execute after dispatch, so synchronous event
+cancellation belongs in host code.
 
 `scope.listen(target, type, block)` returns a listener-removal function.
 `scope.reap({keep: processId, retain: processIds})` disposes completed or
 cancelled processes, except the optional `keep` process and the IDs in the
 optional `retain` Set or Map.  `scope.dispose()` removes its listeners,
-cancels pending processes, and disposes their records.  It reports
-cleanup failures through `AggregateError` after attempting every cleanup.
-Debugger object handles have a separate lifetime and use `release` or
-`releaseAll`.
+cancels pending processes, and disposes their records.  It reports cleanup
+failures through `AggregateError` after attempting every cleanup.  Debugger
+object handles have a separate lifetime and use `release` or `releaseAll`.
 
 ### Compiling and assembling code
 
@@ -747,10 +753,10 @@ returns `{op, name, args, next}`.
 | `jump` | Byte offset or assembler label | Continue at the destination |
 | `jumpFalse` | Byte offset or assembler label | Pop a Boolean and branch when false |
 
-Lexical depth zero denotes the current environment.  Binding indexes start
-at zero, with arguments followed by locals.  Greater depths select captured
-environments.  A successful send consumes its receiver and arguments.
-An ordinary return supplies one result to the caller's operand stack.
+Lexical depth zero denotes the current environment.  Binding indexes start at
+zero, with arguments followed by locals.  Greater depths select captured
+environments.  A successful send consumes its receiver and arguments.  An
+ordinary return supplies one result to the caller's operand stack.
 
 ## Browser tools
 
@@ -758,12 +764,15 @@ An ordinary return supplies one result to the caller's operand stack.
 
 `createWorkspace(options)` in [`ui/workspace.js`](../ui/workspace.js) creates
 an area of movable, resizable panes.  Each pane is a Smallslop object whose
-methods open, close, focus, move, resize, and enlarge it, so every pane
-change runs as a Smallslop process that the debugger can inspect.  The
-workspace adds a Panes pane that lists and opens panes, an Activity pane that
-lists reported errors, and Panes and Reset arrangement buttons to the
-toolbar.  It saves the arrangement in the given storage and restores it on
-the next load.
+methods open, close, focus, move, resize, and enlarge it.  Workspace commands
+and pane controls send these messages, so their changes run as Smallslop
+processes that the debugger can inspect.  Restoring a saved arrangement, Reset
+arrangement, and fitting panes to a resized container set the pane slots in
+JavaScript.  The workspace adds a Panes pane that lists and opens panes, an
+Activity pane that lists reported errors, and Panes and Reset arrangement
+buttons to the toolbar.  It saves the arrangement in the given storage and
+restores it on the next load, including the arrangement of panes that `add`
+registers later.
 
 | Option | Meaning |
 | --- | --- |
@@ -776,8 +785,8 @@ the next load.
 The returned object has `world`, `dispatch(request)`, `add(definition)`,
 `report(error)`, `state()`, and `dispose()`.  `world` holds the pane runtime,
 its host, its debugger adapter, and its panes.  `dispatch` runs a workspace
-command, and `add` registers a pane after creation.  `report` records an
-error in the Activity pane.
+command, and `add` registers a pane after creation.  `report` records an error
+in the Activity pane.
 
 | Definition field | Meaning |
 | --- | --- |
@@ -788,8 +797,8 @@ error in the Activity pane.
 | `create(body, {pane, report, on})` | Build the pane's content in `body` and return its handlers |
 | `className`, `owner`, `association` | Optional pane class, owning object, and `{id, label, color}` group marker |
 
-`create` runs when the pane is first shown.  `on(node, type, handler)` adds
-an event listener that the workspace removes with the content.  The returned
+`create` runs when the pane is first shown.  `on(node, type, handler)` adds an
+event listener that the workspace removes with the content.  The returned
 object can provide `refresh()`, `state()`, `visibility(shown)`, and
 `dispose()`, and `state()` supplies the pane's `content` in the workspace
 state.
@@ -808,28 +817,30 @@ state.
 `createWorkspaceDevelopment(workspace, {server})` in
 [`ui/development.js`](../ui/development.js) adds the System Browser and
 Debugger panes to a workspace.  It opens object inspectors and expression
-debuggers as further panes.  The optional `server` function sends a command
-to a [server runtime](#server-runtime), for example
-`request => connection.server(request)`.  With it, the Debugger can select
-the Server runtime, and server object inspectors work.
+debuggers as further panes.  The optional `server` function sends a command to
+a [server runtime](#server-runtime), for example `request =>
+connection.server(request)`.  With it, the Debugger and the expression
+debuggers of page inspectors can select the Server runtime.  Server object
+inspectors receive their own server function from `remoteInspector`.
 
-The returned `execute(request)` runs `browse` and `objectInspector`
-commands and passes other commands to the workspace.  `inspect(value)` opens
-an inspector on a page value, and `remoteInspector(snapshot, server)` opens
-one on a server inspection.  `refresh()` updates the visible development
-panes.
+The returned `execute(request)` runs `browse` and `objectInspector` commands
+and passes other commands to the workspace.  `inspect(value)` opens an
+inspector on a page value, and `remoteInspector(snapshot, server)` opens one
+on a server inspection.  `refresh()` updates the visible development panes,
+and `serverDisconnected()` marks every server inspector disconnected after the
+server connection closes.
 
 The System Browser selects a category, class, protocol, and method above a
 source editor.  It installs edited methods after checking that the loaded
-version is still current, searches senders and implementors, shows the
-class hierarchy and slots, and sets entry breakpoints.  The Class button
-shows the shared `Class` behavior.  Each browser's selections and draft
-belong to its Smallslop object.
+version is still current, searches senders and implementors, shows the class
+hierarchy and slots, and sets entry breakpoints.  The Class button shows the
+shared `Class` behavior.  Each browser's selections and draft belong to its
+Smallslop object.
 
 The Debugger lists the selected runtime's processes and source methods.  It
-inspects, pauses, resumes, steps, retries, and cancels a selected process.
-It installs edited method source, sets entry breakpoints, clears
-breakpoints, and runs JSON debugger requests typed into its command box.
+inspects, pauses, resumes, steps, retries, and cancels a selected process.  It
+installs edited method source, sets entry breakpoints, clears breakpoints, and
+runs JSON debugger requests typed into its command box.
 
 ### Object inspectors
 
@@ -840,17 +851,19 @@ evaluation, and Debugger opens that process for inspection and repair.
 
 An `Inspector` object owns its receiver, selection, offset, expression, and
 evaluation.  Each session owns its debugger handles and processes.  An
-attached debugger retains its evaluation after the inspector closes.
-Host records and arrays expose stored values and label accessors.  Collection
+attached debugger retains its evaluation after the inspector closes.  Host
+records and arrays expose stored values and label accessors.  Collection
 inspection reads pages of 100 values and preserves ResultSet position.
 
-For embedding, `new Inspectors(host, debuggerAdapter)` installs the Inspector
-class and owns inspection sessions.  `open(value)` returns a session with
-`id`, `object`, and `state()`.  `dispatch({action:'open', value:encodedValue})`
-decodes through the supplied debugger adapter and returns session state.
-Subsequent actions use that session ID.  `retain` accepts an optional
-`processId`, and matching `close` calls release those references.  `dispose()`
-releases all sessions.  The registry uses its host's runtime and runner.
+For embedding, `new Inspectors(host, debuggerAdapter)` defines the `Inspector`
+class and owns inspection sessions.  A runtime can have one `Inspectors`
+registry, because a second one would define the class again.  `open(value)`
+returns a session with `id`, `object`, and `state()`.
+`dispatch({action:'open', value:encodedValue})` decodes through the supplied
+debugger adapter and returns session state.  Subsequent actions use that
+session ID.  `retain` accepts an optional `processId`, and matching `close`
+calls release those references.  `dispose()` releases all sessions.  The
+registry uses its host's runtime and runner.
 
 ### Counter page
 
@@ -858,8 +871,8 @@ The [counter page](../examples/index.html), served by `npm run serve`, shows
 two counters and a shared debugger and method editor.  Each counter is a
 Smallslop object with its own DOM root and host scope.  Smallslop methods
 register its callbacks, update its count, render its output, and invoke
-delayed host work.  The [counter source](../examples/counters.js)
-contains those methods and the JavaScript debugger interface.
+delayed host work.  The [counter source](../examples/counters.js) contains
+those methods and the JavaScript debugger interface.
 
 | Control | Behavior |
 | --- | --- |
@@ -873,12 +886,12 @@ contains those methods and the JavaScript debugger interface.
 | Remove | Remove the counter's listeners and cancel and dispose its processes |
 
 The debugger lists processes and frames, highlights the current source span,
-and shows lexical bindings and prepared send operands.  Edits use the
-[JSON value format](#commands-and-values).
-Run starts ordinary execution.  Resume preserves a pending step-over or
-step-out target.  Break here uses the selected frame's code path and PC.
-Break at entry uses the method version loaded in the editor.  A method
-breakpoint applies to every invocation of that version.
+and shows lexical bindings and prepared send operands.  Edits use the [JSON
+value format](#commands-and-values).  Run starts ordinary execution.  Resume
+preserves a pending step-over or step-out target.  Break here uses the
+selected frame's code path and PC.  Break at entry uses the method version
+loaded in the editor.  A method breakpoint applies to every invocation of that
+version.
 
 A captured-binding exercise uses these controls:
 
@@ -893,16 +906,16 @@ Install method followed by Retry completes the rendering send.  The stored
 count increases once.  Method edits preserve the version held by an active
 frame, while later sends use the replacement.
 
-Reject later pauses with a prepared `call:with:with:` send.  Setting Argument 3
-to `{"kind":"boolean","value":false}` and selecting Retry starts a successful
-host call.  Cancel during a wait cancels the timer and prevents resumption.
-Cancellation preserves state changes made before the cancelled operation.
-The counting loop updates its stored count during execution and renders at
-completion.  Inspecting its Counter receiver reveals the stored count while
-it is paused.
+Reject later pauses with a prepared `call:with:with:` send.  Setting Argument
+3 to `{"kind":"boolean","value":false}` and selecting Retry starts a
+successful host call.  Cancel during a wait cancels the timer and prevents
+resumption.  Cancellation preserves state changes made before the cancelled
+operation.  The counting loop updates its stored count during execution and
+renders at completion.  Inspecting its Counter receiver reveals the stored
+count while it is paused.
 
-The page retains the selected or latest terminal process for each counter
-and disposes older terminal records.  Frame evaluations inherit the counter's
+The page retains the selected or latest terminal process for each counter and
+disposes older terminal records.  Frame evaluations inherit the counter's
 scope.  Removing a counter disposes all its processes.  The method editor
 retains its loaded version until another method is loaded.
 
@@ -912,7 +925,6 @@ same debugger operations through a separate adapter, so refreshing the UI
 preserves agent handles.  An agent releases its handles and retained methods
 with `release`, `releaseMethods`, or `releaseAll`.  A standalone evaluation
 created without a frame has no counter owner and requires explicit disposal.
-
 The console also exposes `Runtime`, `Debugger`, and the page's `runtime`,
 `runner`, and `host`.
 
@@ -937,18 +949,18 @@ SQL runs in a separate process, so the server debugger can respond while a
 statement runs.  [Agent and Web Server](agent.md#server-commands) lists the
 commands that `dispatch(request, {signal})` accepts.
 
-`Database execute:parameters:` accepts SQL reads, writes, schema changes,
-and explicit transactions, one statement per send.  It returns a `ResultSet`
-with column metadata, completed rows, the affected-row count, and paging.
-Results stay in server memory until closed.  A failed SQL send pauses with
-its frames retained, and the debugger can repair and retry it.
+`Database execute:parameters:` accepts SQL reads, writes, schema changes, and
+explicit transactions, one statement per send.  It returns a `ResultSet` with
+column metadata, completed rows, the affected-row count, and paging.  Results
+stay in server memory until closed.  A failed SQL send pauses with its frames
+retained, and the debugger can repair and retry it.
 
 `send(receiver, selector, args, {pause, signal})` starts a process and
 resolves when it completes or stops for inspection.  `pause: true` creates the
-process paused.  An aborted signal cancels the process.  `completed(response)`
-returns a command response whose process completed and throws an error
-describing any other outcome.  `close()` cancels waiting processes and closes
-the database.
+process paused.  An aborted signal cancels the process.  `close()` cancels
+waiting processes and closes the database.  The module also exports
+`completed(response)`, a function that returns a command response whose
+process completed and throws an error describing any other outcome.
 
 ## Unimplemented features
 

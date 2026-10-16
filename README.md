@@ -6,12 +6,13 @@ inspectable, and provides a debugger that can step, edit bindings, replace
 methods, and retry failed sends.  The repository also contains browser
 development tools, a Node server runtime with a SQLite database, a Pi agent
 that operates a page, and a runtime for installed JavaScript components.
+Smallslop uses the [MIT License](LICENSE).
 
 ## Using Smallslop in a project
 
 A project uses Smallslop by copying directories into its own tree.  The
-directories use relative imports and require no build step.  Copy a
-directory together with the directories it imports.
+directories use relative imports and require no build step.  Copy a directory
+together with the directories it imports.
 
 | Directory | Contents | Runs in | Imports |
 | --- | --- | --- | --- |
@@ -23,10 +24,10 @@ directory together with the directories it imports.
 
 ## Setup and commands
 
-The code requires Node 24, which provides `node:sqlite`.  The browser tests
-require Chromium as `chromium` on `PATH` or as the executable named by the
-`CHROMIUM` environment variable.  Run `npm install` once, then use these
-commands from the repository root:
+The code requires Node 24.2 or later, which provides `node:sqlite` and
+`import.meta.main`.  The browser tests require Chromium as `chromium` on
+`PATH` or as the executable named by the `CHROMIUM` environment variable.  Run
+`npm install` once, then use these commands from the repository root:
 
 | Command | Result |
 | --- | --- |
@@ -42,15 +43,15 @@ commands from the repository root:
 `npm run workspace` starts the [workspace example](examples/workspace/page.js)
 and prints its URL.  The page contains movable panes for an agent
 conversation, the System Browser, the Debugger, object inspectors, and
-installed components.  The agent operates the same objects as the user
-through page commands, a server Smallslop runtime with a SQLite database,
-and the component service.  The Disk example button installs a server
-component and a browser component and opens their pane.
+installed components.  The agent operates the same objects as the user through
+page commands, a server Smallslop runtime with a SQLite database, and the
+component service.  The Disk example button installs a server component and a
+browser component and opens their pane.
 
-The agent requires a Pi model credential.  The server listens on
-`127.0.0.1` by default and has no authentication.  On another address,
-anyone who can reach the port can use the agent with your credential and
-can run JavaScript on the server through the component service.
+The agent requires a Pi model credential.  The server listens on `127.0.0.1`
+by default and has no authentication.  On another address, anyone who can
+reach the port can use the agent with your credential and can run JavaScript
+on the server through the component service.
 
 ## Documentation
 
@@ -60,5 +61,3 @@ can run JavaScript on the server through the component service.
 | [Agent and Web Server](docs/agent.md) | Workspace server, session protocol, agent tools and commands, model selection, security |
 | [Components](docs/components.md) | Component modules, instances, messages, panes, jobs, saving, debugging, hosting |
 | [Development Notes](devnotes.md) | Decisions, test results, and plans |
-
-Smallslop uses the [MIT License](LICENSE).

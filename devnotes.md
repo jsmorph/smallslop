@@ -22,7 +22,7 @@ component test, and an example page with an agent pane.
 - [x] Write `ui/agent-connection.js` from `photos/connection.js`.  `ask` returns a promise, and `interrupt` sends the interrupt message.
 - [x] Copy Photoslop's `app/workspace-development.js` to `ui/development.js` with relative imports, and add a `server` option that gives its Debugger a Server selector.
 - [x] Write the workspace example: the page in `examples/workspace/` with agent, System Browser, Debugger, object inspector, pane list, and activity panes, and its server in `examples/workspace.mjs`, outside the served directory.
-- [x] Add `scripts/test-workspace.mjs`, which drives the example in Chromium with a test agent, and `scripts/cdp-connection.mjs`, copied from the `CdpConnection` class in Photoslop's `server/debug-connection.mjs`.
+- [x] Add `scripts/test-workspace.mjs`, which drives the example in Chromium with a test agent, and `scripts/cdp-connection.mjs`, copied from the `CdpConnection` class in Photoslop's `server/debug-connection.mjs`.  The component work later replaced it with the whole `server/debug-connection.mjs`.
 - [x] Copy the manual to `docs/manual.md` without the photo and Photoslop sections, and update `README.md`.
 - [x] Run the tests.
 - [x] Commit.
@@ -93,7 +93,8 @@ Here the service receives a page handle for each WebSocket session instead.
 The workspace test installs the disk example, refreshes its pane, and lists
 the page's instances through an agent page command.
 `test/component-service.test.js` runs the disk reader in the server child
-process without a browser.
+process without a browser.  Both tests run with `npm test` and
+`npm run test:workspace`.
 
 ## 2026-10-16: Documentation review
 
@@ -110,7 +111,7 @@ an inaccurate sentence about which modules carry debugger operations.
 - [x] Document `createWorkspace`, pane definitions, workspace commands, `createWorkspaceDevelopment`, `createSmallslopServer`, the agent interface, `createPiAgent`, the three tool names, `SessionConnection`, and the example's page commands.
 - [x] Write a full component guide in `docs/components.md`, and host the example components in the workspace page.
 - [x] Write `docs/agent.md` for the agent, the Web server, and the session protocol.
-- [x] Collect pending work in the limitations table, and remove history phrasing, test counts, and vague sentences.
+- [x] Collect pending work in the unimplemented features table, and remove history phrasing, test counts, and vague sentences.
 - [x] Check every documented option and command against the code, and run every Node example.
 - [x] Remove test counts and settled items from these notes.
 
@@ -120,13 +121,26 @@ Three reviews covered the server code, the browser code and tests, and the
 documentation.  The user approved fixing every finding and stopping the
 server until the crash is fixed.
 
-- [ ] Handle socket errors on rejected upgrades, so a reset connection cannot crash the server.
-- [ ] Limit WebSocket message size, reject unmasked and malformed frames, ignore frames after close, and close connections whose unsent output exceeds a limit.
-- [ ] Let a page's component runtime register again from a new connection, and answer page commands on the socket that delivered them.
-- [ ] Send structured errors in both directions of the session protocol.
-- [ ] Answer the component service's read operations both directly and as requests.
-- [ ] Release successful disk example calls, and reuse the disk example pane.
-- [ ] Fix the lesser defects: shutdown address check, HTTP statuses, concurrent restart and attach, disconnected server inspectors, agent pane and Components pane redraws, failed mounts, saved arrangement of later panes, and the service's instance records.
-- [ ] Send conversation entries one at a time in the session protocol.
-- [ ] Add tests for each fix, deadlines for the polling loops, and a stronger System Browser assertion.
-- [ ] Correct the documentation findings and the style findings.
+- [x] Handle socket errors on rejected upgrades, so a reset connection cannot crash the server.
+- [x] Limit WebSocket message size, reject unmasked and malformed frames, ignore frames after close, and close connections whose unsent output exceeds a limit.
+- [x] Let a page's component runtime register again from a new connection, and answer page commands on the socket that delivered them.
+- [x] Send structured errors in both directions of the session protocol.
+- [x] Answer the component service's read operations both directly and as requests.
+- [x] Release successful disk example calls, and reuse the disk example pane.
+- [x] Fix the lesser defects: shutdown address check, HTTP statuses, concurrent restart and attach, disconnected server inspectors, agent pane and Components pane redraws, failed mounts, saved arrangement of later panes, and the service's instance records.
+- [x] Send conversation entries one at a time in the session protocol.
+- [x] Add tests for each fix except the shutdown address check, deadlines for the polling loops, and a stronger System Browser assertion.  A test of that check needs an upgrade request on a connection that survives `server.close()`, and Node closes idle connections there.
+- [x] Correct the documentation findings and the style findings.
+
+| Decision | Reason |
+| --- | --- |
+| A rejected upgrade's socket destroys itself on error | Node removes its own socket error handler before `upgrade`, and a reset from the peer needs only cleanup |
+| WebSocket messages are limited to 2 MiB and unsent output to 16 MiB, both options of `acceptWebSocket` | Component requests are limited to 1 MiB, so 2 MiB leaves room for the envelope |
+| A matching runtime name and incarnation from a new connection replaces the old page handle | Both values are random, so only the same page knows them |
+| Errors cross the session protocol as `errorData` records | Component errors carry `phase`, `component`, and `outcomeUnknown` |
+| The session sends `session` once, then `status` and `message` updates | Resending every entry on each update grew with the square of the conversation length |
+| `package.json` requires Node 24.2 | `examples/workspace.mjs` uses `import.meta.main` |
+
+The headline of pushed commit `7181993` has 60 characters, and the user's
+rule requires fewer.  Changing it requires rewriting published history, so
+it remains until the user decides.

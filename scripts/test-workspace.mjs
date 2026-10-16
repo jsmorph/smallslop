@@ -21,8 +21,10 @@ let hold = null;
 async function testAgent({ page, server, onEvent }) {
   const tools = smallslopTools({ page, server });
   const call = async (name, args) => {
+    onEvent({ role: 'tool', text: `${name} ${JSON.stringify(args)}` });
     const result = await tools.find(tool => tool.name === name).execute('test-call', args, new AbortController().signal);
     calls.push({ name, args });
+    onEvent({ role: 'result', text: `${name}: ${result.content[0].text.slice(0, 200)}` });
     return JSON.parse(result.content[0].text);
   };
   return {
@@ -134,8 +136,11 @@ try {
   assert.equal(await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'state'}).className`), 'Inspector');
   assert.ok(await evaluate(sessionId, `[...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished system-browser.'))`));
 
+  const firstDetails = `smallslop.workspace.world.panes.get('agent').view.body.querySelector('details')`;
+  await evaluate(sessionId, `${firstDetails}.open = true`);
   await prompt(sessionId, 'database');
   await until(sessionId, `${idle} && [...smallslop.workspace.world.panes.values()].some(pane => pane.object.slots.title === 'Inspector: Database')`);
+  assert.equal(await evaluate(sessionId, `${firstDetails}.open`), true);
   await evaluate(sessionId, `smallslop.command({op: 'open', id: 'debugger'}) && null`);
   assert.deepEqual(await evaluate(sessionId, `[...smallslop.workspace.world.panes.get('debugger').view.body.querySelector('select').options].map(option => option.value)`), ['Page', 'Server']);
   await evaluate(sessionId, `(() => {
@@ -154,6 +159,21 @@ try {
     return text.includes('Used bytes') && text;
   })()`);
   assert.match(usage, /^\/\nUsed bytes: \d+\nFree bytes: \d+/);
+  await evaluate(sessionId, `smallslop.command({op: 'open', id: 'components'}) && null`);
+  await evaluate(sessionId, `smallslop.workspace.world.panes.get('components').view.body.querySelector('[data-action="inspect"]').focus()`);
+  await evaluate(sessionId, `[...smallslop.workspace.world.panes.values()].find(pane => pane.object.slots.title === 'Disk usage').view.body.querySelector('button').click()`);
+  await until(sessionId, `smallslop.components.runtime.calls.size === 0`);
+  assert.equal(await evaluate(sessionId, `document.activeElement.dataset.action === 'inspect' && smallslop.workspace.world.panes.get('components').view.body.contains(document.activeElement)`), true);
+  const mount = await evaluate(sessionId, `(async () => {
+    const { run, identity } = smallslop.components;
+    const module = await run({ op: 'modules.install', manifest: { name: 'broken-pane', target: 'browser', interface: { className: 'BrokenPane' } },
+      files: { 'index.mjs': 'export function create() { return { mount() { throw new Error("Mount failed."); } }; }' } });
+    const broken = await run({ op: 'objects.create', runtime: identity.runtime, version: module.version, configuration: { kind: 'record', value: {} } });
+    try { await run({ op: 'panes.open', target: broken.reference }); } catch (error) {
+      return { error: error.message, panes: [...smallslop.workspace.world.panes.keys()].filter(id => id.startsWith('component-')).length };
+    }
+  })()`);
+  assert.deepEqual(mount, { error: 'Mount failed.', panes: 1 });
   await prompt(sessionId, 'components');
   await until(sessionId, `${idle} && [...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished components.'))`);
 
@@ -180,10 +200,15 @@ try {
 
   await evaluate(sessionId, `[...smallslop.workspace.world.panes.get('agent').view.body.querySelectorAll('button')].find(button => button.textContent === 'Reset').click()`);
   await until(sessionId, `${idle} && document.querySelectorAll('.agent-message').length === 0`);
-  assert.deepEqual(await evaluate(sessionId, `smallslop.workspace.state().activity.map(entry => entry.message)`),
-    ['The session connection closed. Reconnect to start a new session.']);
+  assert.deepEqual(await evaluate(sessionId, `smallslop.workspace.state().activity.map(entry => entry.message).sort()`),
+    ['Mount failed.', 'The session connection closed. Reconnect to start a new session.']);
+  await evaluate(sessionId, `smallslop.command({op: 'move', id: 'system-browser', x: 300, y: 50}) && null`);
+  await delay(300);
+  await cdp.send('Page.reload', {}, sessionId);
+  await until(sessionId, `globalThis.smallslop && ${idle}`);
+  assert.equal(await evaluate(sessionId, `smallslop.workspace.world.panes.get('system-browser').object.slots.x`), 300);
   assert.ok(calls.some(call => call.name === 'smallslop_server'));
-  console.log('Chromium passed the workspace agent, page command, server database, component, reconnect, interrupt, and reset tests.');
+  console.log('Chromium passed the workspace agent, page command, server database, component, reconnect, interrupt, reset, and arrangement tests.');
 } finally {
   const exit = browser?.exitCode === null ? new Promise(resolve => browser.once('exit', resolve)) : Promise.resolve();
   if (cdp) { await cdp.send('Browser.close'); await cdp.close(); }

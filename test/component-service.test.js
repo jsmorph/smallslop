@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { encode, decode } from '../components/values.js';
 import { ComponentService } from '../server/component-service.mjs';
 
@@ -53,6 +55,33 @@ test('the component service runs server components in a child process', { timeou
     assert.match(restarts.find(outcome => outcome.status === 'rejected').reason.message, /incarnation conflict/);
     assert.notEqual(service.process.identity.incarnation, incarnation);
   } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a browser debugger attachment admits one request at a time', { timeout: 10000 }, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-service-'));
+  const service = new ComponentService({ directory, namespace: 'test' });
+  const respond = Promise.withResolvers();
+  const endpoint = createServer(async (_request, response) => {
+    await respond.promise;
+    response.writeHead(500);
+    response.end();
+  });
+  endpoint.listen(0, '127.0.0.1');
+  await once(endpoint, 'listening');
+  const identity = { namespace: 'test', runtime: 'browser-debug', incarnation: 'one' };
+  try {
+    await service.register({ identity, page: { connected: () => true, send: async () => null } });
+    const request = { runtime: identity.runtime, incarnation: 'one', endpoint: `http://127.0.0.1:${endpoint.address().port}`, targetId: 'page' };
+    const first = service.attach(request);
+    await assert.rejects(service.attach(request), /already attached/);
+    respond.resolve();
+    await assert.rejects(first, /HTTP 500/);
+    await assert.rejects(service.attach(request), /HTTP 500/);
+  } finally {
+    endpoint.close();
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }

@@ -1,19 +1,19 @@
 # Components
 
-A component is a JavaScript module installed as an immutable version and
-used through a Smallslop object.  Its manifest names a factory function and
-maps Smallslop selectors to the methods of the object that the factory
-returns.  Browser components run in a page and can show a view in a pane.
-Server components run in a Node child process of the Web server.  Every
-message to a component runs as a Smallslop process, so the Smallslop
-debugger can pause, inspect, repair, and retry it.
+A component is a JavaScript module installed as an immutable version and used
+through a Smallslop object.  Its manifest names a factory function and maps
+Smallslop selectors to the methods of the object that the factory returns.
+Browser components run in a page and can show a view in a pane.  Server
+components run in a Node child process of the Web server.  Every message to a
+component runs as a Smallslop process, so the Smallslop debugger can pause,
+inspect, repair, and retry it.
 
 ## The disk example
 
 The workspace's Disk example button installs two components from
 [`examples/components/`](../examples/components/) and opens a pane.
-[`disk-reader.mjs`](../examples/components/disk-reader.mjs) runs on the
-server and reads file-system statistics for a configured path.
+[`disk-reader.mjs`](../examples/components/disk-reader.mjs) runs on the server
+and reads file-system statistics for a configured path.
 [`disk-pane.mjs`](../examples/components/disk-pane.mjs) runs in the page,
 holds a binding to a disk reader, and shows its used, free, and available
 bytes when the user selects Refresh.
@@ -36,12 +36,14 @@ await components.run({ op: 'panes.open', target: display.reference, title: 'Disk
 ```
 
 `components` is the object that
-[`createWorkspaceComponents`](#browser-runtime) returns, and the example
-page's `openDiskExample` function runs these steps.  The pane's Refresh
-button starts a `refresh` call on the browser instance.  That method sends
-`usage` to the server instance through its `disk` binding and renders the
-reply.  The agent runs the same steps with the `diskExample` page command or
-with `components` page commands.
+[`createWorkspaceComponents`](#browser-runtime) returns, and `readerSource`
+and `paneSource` hold the text of the two files.  The example page's
+`openDiskExample` function runs these steps once and shows the same pane on
+later clicks.  The pane's Refresh button starts a `refresh` call on the
+browser instance, which sends `usage` to the server instance through its
+`disk` binding and renders the reply.  Both calls use `releaseOnSuccess`, so
+completed refreshes leave no calls behind.  The agent runs the same steps with
+the `diskExample` page command or with `components` page commands.
 
 ## Modules and manifests
 
@@ -53,9 +55,9 @@ recomputes the hash and rejects files that differ from it.
 
 | Manifest field | Meaning |
 | --- | --- |
-| `name` | Lowercase letters, digits, and hyphens, starting with a letter |
+| `name` | At most 64 lowercase letters, digits, and hyphens, starting with a letter |
 | `target` | `browser` or `server` |
-| `entry` | Entry file, default `index.mjs` |
+| `entry` | Entry file ending in `.js` or `.mjs`, default `index.mjs` |
 | `factory` | Exported factory function, default `create` |
 | `interface.className` | Smallslop class name, starting with a capital letter |
 | `interface.messages` | Map from selector to message declaration |
@@ -71,10 +73,12 @@ recomputes the hash and rejects files that differ from it.
 | `context` | `true` passes a [call context](#jobs-and-call-context) after the arguments |
 | `description` | Text stored with the message and returned in instance descriptions |
 
-File names are relative paths of letters, digits, dots, underscores, and
-hyphens.  A browser module can import other files of its version by relative
-path and any file the Web server serves by absolute URL path.  A server
-module is imported from the store directory and can import Node's built-in
+A file name is a relative path of at most 240 characters.  Each path segment
+contains letters, digits, dots, underscores, and hyphens, and starts with a
+letter, digit, or underscore.  The store reserves `manifest.json`.  A browser
+module can import other files of its version by relative path and any file the
+Web server serves by absolute URL path.  The server runtime imports a server
+module from the store directory, and that module can import Node's built-in
 modules.
 
 ## Factories and context
@@ -96,16 +100,15 @@ class publishes the declared selectors.
 | `task(promise)` | Track work that the instance started outside a message |
 | `operation(promise, cancel)` | Return a host operation that the debugger can cancel |
 | `changed()` | Advance the instance revision and notify observers |
-| `report(error)` | Record an error on the instance and report it to the page |
+| `report(error)` | Record an error on the instance.  A browser runtime also reports it to the page's Activity pane. |
 
-`send` and `action` accept `{releaseOnSuccess: true}`, which releases a
-call after it completes without error, pause, or debugger retention.  Calls
-started without that option stay in the call registry until released.
-
-A browser component's object can define `mount(root)`, which builds its view
-inside a pane, and optional `visibility(shown)` and `dispose()` methods.  Any
-component can define `snapshot()` and `restore(state)` to save declared
-state, as described under [Saving](#saving-source-and-state).
+`send` and `action` accept `{releaseOnSuccess: true}`, which releases a call
+after it completes without error, pause, or debugger retention.  Calls started
+without that option stay in the call registry until released.  A browser
+component's object can define `mount(root)`, which builds its view inside a
+pane, and optional `visibility(shown)` and `dispose()` methods.  Any component
+can define `snapshot()` and `restore(state)` to save declared state, as
+described under [Saving](#saving-source-and-state).
 
 ## Wrappers, messages, and calls
 
@@ -129,23 +132,31 @@ registry with its process, so the debugger can inspect or retry it, until
 | `target`, `version`, `selector`, `args` | What the call sent |
 | `status` | `running`, `waiting` for a JavaScript promise, `paused`, `completed`, or `cancelled` |
 | `execution` | State of the JavaScript method: `pending`, `running`, `completed`, or `failed` |
+| `export` | State of the result encoding: `pending`, `completed`, or `failed` |
 | `result`, `error` | Encoded result, or the error |
-| `retained` | The call paused, was inspected, or was retained, so a release with `ifSuccessful` keeps it |
+| `retained` | The call paused, or `calls.inspect` or `calls.retain` marked it |
 | `job`, `progress`, `publishing` | Job label and input, latest progress, and publication state |
 
+A call can complete with `export: 'failed'` and an `error`.  This outcome
+occurs when the result cannot be encoded, or when a `reference` message
+returns an object that is not a registered component.  The process completed,
+and the call keeps the unencoded result for inspection.
+
 `calls.cancel` cancels the call's process and aborts its call context.
-JavaScript work that ignores the abort signal continues until it settles,
-and the instance counts that work as active.  `calls.retain` keeps a call
-through completion, and `calls.release` with `ifSuccessful: true` releases
-it only after a clean completion.
+JavaScript work that ignores the abort signal continues until it settles, and
+the instance counts that work as active.  `calls.retain` marks a call so that
+a later release with `ifSuccessful` keeps it.  `calls.release` removes a
+finished call, and with `ifSuccessful: true` it removes the call only if it
+has already completed without error or retention; otherwise it returns
+`{released: null}`.
 
 ## Instances and references
 
-A runtime identity has a `namespace`, a `runtime` name, and an
-`incarnation`.  The server runtime is named `server`, and each page's runtime
-is named `browser-` followed by a random ID.  A reference adds the instance
-`id`.  A new page load or a server child restart creates a new incarnation,
-and references to an earlier incarnation fail.
+A runtime identity has a `namespace`, a `runtime` name, and an `incarnation`.
+The server runtime is named `server`, and each page's runtime is named
+`browser-` followed by a random ID.  A reference adds the instance `id`.  A
+new page load or a server child restart creates a new incarnation, and
+references to an earlier incarnation fail.
 
 | Instance status | Meaning |
 | --- | --- |
@@ -154,19 +165,21 @@ and references to an earlier incarnation fail.
 | `failed` | Construction or disposal failed.  `error` describes it. |
 | `snapshotting` | Save is reading its state |
 | `disposing`, `disposed` | Disposal is running or finished |
-| `unavailable` | The instance's runtime disconnected or restarted |
 
 An instance description also lists its configuration, bindings with their
 revisions, published messages, active calls, active processes, host tasks,
-pane, and saved snapshot ID.  `objects.dispose` requires an idle instance
-with no mounted pane and no consumer bindings, and then calls the object's
-`dispose()` method.
+pane, and saved snapshot ID.  `objects.dispose` requires an idle instance with
+no mounted pane and no consumer bindings, and then calls the object's
+`dispose()` method.  `objects.inspect` returns one instance's description, and
+`objects.list` returns the description of every instance in a runtime.
 
 ## Values
 
 Configuration, arguments, results, and saved state use tagged JSON records.
 `encode` and `decode` in [`components/values.js`](../components/values.js)
-convert between JavaScript values and these records.
+convert between JavaScript values and these records.  Decoding restores
+BigInts, byte arrays, and special floats, and it returns a reference as a
+reference record.
 
 | JavaScript value | Encoding |
 | --- | --- |
@@ -194,24 +207,27 @@ another runtime: the browser disk pane binds to the server disk reader.
 
 `bindings.reconnect` replaces a binding's target.  It takes `target`, `name`,
 `expectedRevision`, `expectedTarget`, and `replacement`, and fails when the
-instance is busy or the binding changed since the caller read it.  An
-observed binding requires a replacement in the same runtime.
+instance is busy or the binding changed since the caller read it.  An observed
+binding requires a replacement in the same runtime.
 
 ## Panes
 
-Browser instances with a `mount` method can occupy panes.  These operations
-run in the page's browser runtime.
+Browser instances with a `mount` method can occupy panes.  The page's browser
+runtime runs these operations, so requests that do not name a browser `target`
+must include `runtime: 'page'`.  `panes.inspect` also requires `runtime:
+'page'` when its target is a server instance.
 
 | Operation | Arguments | Effect |
 | --- | --- | --- |
 | `panes.open` | `target`, optional `title`, `bounds`, `association`, `id` | Mount the instance in a new pane, or show its existing pane |
 | `panes.replace` | `id`, `target`, `expectedTarget`, `expectedRevision` | Mount another idle instance in the pane |
-| `panes.discard` | `id`, `expectedRevision` | Dispose the instance and remove the pane |
-| `panes.list` | none | Component panes with targets and revisions |
-| `panes.inspect` | `target` | Open an object inspector on an instance in this page or the server |
+| `panes.discard` | `runtime: 'page'`, `id`, `expectedRevision` | Dispose the instance and remove the pane |
+| `panes.list` | `runtime: 'page'` | Component panes with targets and revisions |
+| `panes.inspect` | `runtime: 'page'`, `target` | Open an object inspector on an instance in this page or the server |
 
 Closing a pane hides it and keeps the instance.  A replacement prepares the
-new view off screen and keeps the old view when preparation fails.
+new view in a hidden element and keeps the old view when preparation fails.  A
+view whose `mount` fails leaves no pane behind.
 
 ## Jobs and call context
 
@@ -232,8 +248,9 @@ and recent finished ones.
 A message declared with `context: true` receives a call context after its
 arguments.  `signal` aborts when the call is cancelled.  `setProgress(record)`
 stores a progress record of at most 4 KiB.  `beginPublication()` marks the
-start of persistent output, after which cancellation is refused.  `call`
-holds the call's ID, target, version, selector, arguments, and job input.
+start of persistent output, after which `calls.cancel` and `jobs.cancel`
+refuse the call.  `call` holds the call's ID, target, version, selector,
+arguments, and job input.
 
 ## Saving source and state
 
@@ -246,7 +263,7 @@ define `restore(state)`.  The reply is the instance description with its
 
 `objects.create` with `snapshot` creates an instance from a saved snapshot:
 the runtime constructs the object and calls `restore(state)` before the
-instance accepts messages.  Bindings are supplied again at creation.
+instance accepts messages.  The request supplies the bindings again.
 `objects.source` returns an instance's current manifest and files.
 `snapshots.list` and `snapshots.read` with `id` read saved snapshots.
 
@@ -264,17 +281,28 @@ request, so a client can repeat a submission after a lost reply.
 | `completed`, `failed` | The operation finished with `result` or `error` |
 | `unknown` | The target runtime disconnected, so the outcome is unknown |
 
+A `{type: 'components'}` session message passes its request to the service.
+The service answers `runtimes.register` and the `requests.` operations
+directly.  It also answers the read operations directly: `runtimes.describe`,
+`modules.list`, `modules.source`, `snapshots.list`, `snapshots.read`,
+`jobs.list`, `jobs.inspect`, and `debug.javascript`.  For any other operation
+it submits a request and replies with the request record.
+
 [`ComponentClient`](../components/client.js) wraps a request function.
-`submit(request)` reserves an ID and submits the request.  `run(request)`
-submits it and waits for its outcome, and throws the request's error.
+`submit(request)` reserves an ID with `requests.reserve` and sends `{op:
+'requests.submit', id, request}`.  `run(request)` submits the request, waits
+for its outcome with `requests.wait`, and returns the result or throws the
+request's error.  The read operations also work through `run`.
 `requests.wait` with `id` and `revision` returns when the request changes or
-after 25 seconds.  `requests.release` removes a finished request.
+after 25 seconds, and `requests.release` removes a finished request.
 
 ## Operations
 
-A request's `runtime` names the runtime that runs it.  `page` means the
-requesting page's browser runtime.  Operations with a `target` run in the
-target's runtime.
+A request's `runtime` names the runtime that runs it, and `page` means the
+requesting page's browser runtime.  An operation with a `target` and no
+`runtime` runs in the target's runtime.  `objects.create` without `runtime`
+runs in the server runtime for a server version and in the requesting page's
+runtime for a browser version.
 
 | Operation | Arguments | Result |
 | --- | --- | --- |
@@ -300,36 +328,39 @@ target's runtime.
 | `panes.open`, `panes.replace`, `panes.discard`, `panes.list`, `panes.inspect` | See [Panes](#panes) | Pane descriptions |
 | `debug.smallslop` | `runtime` or `target`, and a debugger `request` | Debugger response |
 | `debug.javascript` | `runtime`, and `action: 'state'` or a `method` and `params` | JavaScript debugger response |
-| `debug.attach`, `debug.detach` | `runtime`, and `incarnation`, `endpoint`, `targetId` for `attach` | Browser debugger state |
+| `debug.attach` | `runtime`, `incarnation`, `endpoint`, `targetId` | Browser debugger state |
+| `debug.detach` | `runtime` | Runtime descriptions, as from `runtimes.describe` |
 | `requests.reserve`, `requests.submit`, `requests.inspect`, `requests.wait`, `requests.release` | See [Requests](#requests-and-the-client) | Request records |
 
 ## Debugging
 
-A component call is an ordinary Smallslop process.  A breakpoint in a
-wrapper method pauses the call, and a JavaScript exception pauses it at the
-send with its operands intact.  The Components pane's Debug button retains a
-call and opens its process in the Debugger pane.  `debug.smallslop` sends a
-[JSON debugger request](manual.md#json-debugger-api) to a runtime's
-debugger, including the server runtime.
+A component call is an ordinary Smallslop process.  A breakpoint in a wrapper
+method pauses the call, and a JavaScript exception pauses it at the send with
+its operands intact.  The Components pane's Debug button retains a call and
+opens its process in the Debugger pane.  `debug.smallslop` sends a [JSON
+debugger request](manual.md#json-debugger-api) to a runtime's debugger,
+including the server runtime.
 
-The server process starts Node's inspector on a loopback port, and the
-service connects to it.  `debug.javascript` with `runtime: 'server'` sends
-`Debugger.` and `Runtime.` protocol methods, such as
-`Debugger.setBreakpointByUrl`, `Debugger.evaluateOnCallFrame`, and
-`Debugger.resume`.  `action: 'state'` lists the component scripts and the
-paused frames.  A JavaScript breakpoint pauses the whole child process, and
-the Web server and its sessions keep running.
+The server process starts Node's inspector on a loopback port, and the service
+connects to it.  `debug.javascript` with `runtime: 'server'` sends `Debugger.`
+and `Runtime.` protocol methods, such as `Debugger.setBreakpointByUrl`,
+`Debugger.evaluateOnCallFrame`, and `Debugger.resume`.  `action: 'state'`
+lists the component scripts and the paused frames.  A JavaScript breakpoint
+pauses the whole child process, and the Web server and its sessions keep
+running.
 
-A browser runtime's JavaScript is debugged through the browser's DevTools
-protocol.  `debug.attach` takes the runtime name, its incarnation, the
-browser's debugging endpoint, and the page's target ID.  The service checks
-that `globalThis.smallslopComponents.identity` in the target page matches
-the runtime before it accepts the attachment.
+The service debugs a browser runtime's JavaScript through the browser's
+DevTools protocol.  `debug.attach` takes the runtime name, its incarnation,
+the browser's debugging endpoint, and the page's target ID.  The service
+checks that `globalThis.smallslopComponents.identity` in the target page
+matches the runtime before it accepts the attachment.
 
 ## The Components pane
 
 The Components pane lists the page's browser instances with their status,
-version, errors, and calls.
+version, errors, and calls.  A keyboard user keeps focus on the same control
+when the list updates.  The calls list of an instance offers Debug for each
+call and Release for each finished call.
 
 | Action | Effect |
 | --- | --- |
@@ -347,10 +378,10 @@ version, errors, and calls.
 
 `createSmallslopServer` creates a
 [`ComponentService`](../server/component-service.mjs) when it receives
-`components: {directory, namespace}`.  The directory holds the store, and
-the namespace is part of every identity and component URL.  The service
-starts the server child process at the first server operation, routes each
-request to its runtime, and records server instances and jobs.
+`components: {directory, namespace}`.  The directory holds the store, and the
+namespace is part of every identity and component URL.  The service starts the
+server child process at the first server operation, routes each request to its
+runtime, and records server instances and jobs.
 
 | Store path | Contents |
 | --- | --- |
@@ -358,10 +389,12 @@ request to its runtime, and records server instances and jobs.
 | `snapshots/ID/record.json` | Saved snapshots |
 
 The Web server routes each page's `{type: 'components'}` messages to the
-service with a page handle.  The service sends that page's runtime the page
-command `{op: 'componentRuntime', identity, request}`.  The page passes
-these commands to `components.command(request)`.  When a page disconnects,
-its runtime's instances become `unavailable`.
+service with a handle for that page's connection.  The service sends the
+page's runtime the page command `{op: 'componentRuntime', identity, request}`,
+and the page passes that whole command to `components.command`.  When a page
+disconnects, the service forgets its runtime until the page registers again.
+A page that reconnects with the same identity registers again and keeps its
+instances.
 
 ### Browser runtime
 
@@ -369,8 +402,8 @@ its runtime's instances become `unavailable`.
 [`ui/components.js`](../ui/components.js) creates a page's browser runtime.
 `workspace` comes from `createWorkspace`, `development` from
 `createWorkspaceDevelopment`, and `request` sends a request to the service,
-for example `value => connection.components(value)`.  The namespace comes
-from `runtimes.describe`.  The function adds the Components pane.
+for example `value => connection.components(value)`.  The namespace comes from
+`runtimes.describe`.  The function adds the Components pane.
 
 | Member | Use |
 | --- | --- |
@@ -378,7 +411,7 @@ from `runtimes.describe`.  The function adds the Components pane.
 | `connect()` | Register the runtime with the service.  Call it after each WebSocket connection opens. |
 | `run(request)` | Submit a request and wait for its result |
 | `request(request)` | Send a request directly, for discovery and request records |
-| `command(request)` | Handle a `componentRuntime` page command |
+| `command(pageCommand)` | Handle a `{op: 'componentRuntime', identity, request}` page command |
 | `runtime`, `client`, `execute`, `panes` | The `ComponentRuntime`, the `ComponentClient`, local operation dispatch, and pane records |
 
 [`ComponentRuntime`](../components/runtime.js) also runs without a page.  Its
@@ -404,19 +437,19 @@ JavaScript object with declared messages and a pre-made wrapper.  The
 | Job label and input | 64 KiB |
 | Progress record | 4 KiB |
 
-Instances last until disposal or the end of their runtime.  A page reload
-ends its browser runtime, and a server child restart ends every server
-instance.  Loaded module code stays cached in its runtime until that runtime
-ends.  This repository does not restore instances after a reload: create
-them again, or create them from saved snapshots.
+Instances last until disposal or the end of their runtime.  A page reload ends
+its browser runtime, and a server child restart ends every server instance.
+Loaded module code stays cached in its runtime until that runtime ends.  This
+repository does not restore instances after a reload: create them again, or
+create them from saved snapshots.
 
 ## Tests
 
-`npm test` runs [`test/components.test.js`](../test/components.test.js),
-which covers values, the store, calls, failures, cancellation, request
-repetition, bindings, registered objects, observation, release, and
-saving, and
-[`test/component-service.test.js`](../test/component-service.test.js),
-which runs a server component in the child process.  `npm run
-test:workspace` installs the disk example in Chromium, refreshes its pane,
-and lists the page's instances through an agent page command.
+`npm test` runs [`test/components.test.js`](../test/components.test.js), which
+covers values, the store, calls, failures, cancellation, request repetition,
+bindings, registered objects, observation, release, and saving.  It also runs
+[`test/component-service.test.js`](../test/component-service.test.js), which
+covers the server child process, read operations, jobs, disposal, and
+concurrent restarts.  `npm run test:workspace` installs the disk example in
+Chromium, refreshes its pane, reconnects, and lists the page's instances
+through an agent page command.

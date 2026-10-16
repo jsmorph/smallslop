@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import { request as httpRequest } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { createSmallslopServer } from '../server/server.mjs';
 import { SessionConnection } from '../ui/session-connection.js';
+import { acceptWebSocket } from '../server/ws.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -220,5 +221,33 @@ test('a page runtime registers again from a new connection', { timeout: 10000 },
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a connection whose unsent output exceeds its limit closes', { timeout: 10000 }, async () => {
+  const server = createServer();
+  const accepted = Promise.withResolvers();
+  const closed = Promise.withResolvers();
+  server.on('upgrade', (request, socket) => {
+    const connection = acceptWebSocket(request, socket, { maxBufferedBytes: 64 * 1024 });
+    connection.onClose = closed.resolve;
+    accepted.resolve(connection);
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const socket = net.connect(server.address().port, '127.0.0.1');
+  try {
+    await once(socket, 'connect');
+    socket.pause();
+    socket.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n`
+      + 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n');
+    const connection = await accepted.promise;
+    const text = 'x'.repeat(64 * 1024);
+    for (let index = 0; index < 1000 && !connection.closed; index++) connection.send(text);
+    await closed.promise;
+    assert.equal(connection.closed, true);
+  } finally {
+    socket.destroy();
+    server.close();
   }
 });

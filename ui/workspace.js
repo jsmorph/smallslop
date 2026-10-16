@@ -1,7 +1,8 @@
 import { PaneWorld } from './panes.js';
 import { createPaneView, element } from './pane-view.js';
 import { createPaneSelector } from './pane-selector.js';
-import { SourceStore } from './sources.js';
+import { SourceStore } from '../src/sources.js';
+import { sourceWriter } from './sources.js';
 
 export function createWorkspace({ container, toolbar, definitions, sources, storage, storageKey, onChange = () => {} }) {
   const events = new AbortController();
@@ -74,7 +75,7 @@ export function createWorkspace({ container, toolbar, definitions, sources, stor
       return { refresh, state: () => activity };
     } });
   for (const failure of world.loadFailures) report(new Error(`${failure.file}: ${failure.className}: ${failure.message}`));
-  const sourceStore = new SourceStore({ runtime: world.runtime, packages: sources, report });
+  const sourceStore = new SourceStore({ runtime: world.runtime, packages: sources, write: sourceWriter(), report, label: 'page runtime', defaultPackage: 'workspace' });
   const defaults = world.layout();
   for (const pane of defaults.panes) pane.visible = pane.id === 'panes' || definitions.some(definition => definition.id === pane.id && definition.open);
   const reset = () => {

@@ -2,13 +2,15 @@ import { Debugger, Host, ProcessRunner, Runtime, SmallObject } from '../src/inde
 import { SqliteConnection } from './sqlite.mjs';
 import { encode, parameters } from './values.js';
 import { Inspectors } from '../src/inspector.js';
-import { loadSources, requireLoaded } from '../src/sources.js';
-import { readPackageSync } from './source-files.mjs';
+import { SourceStore, loadSources, requireLoaded } from '../src/sources.js';
+import { readPackageSync, sourceRoot as defaultSourceRoot, writeSourceFile } from './source-files.mjs';
 
 export class ServerWorld {
-  constructor(path, { sourceRoot } = {}) {
-    this.runtime = new Runtime({ sources: readPackageSync('kernel', sourceRoot) });
-    requireLoaded(loadSources(this.runtime, [...readPackageSync('tools', sourceRoot), ...readPackageSync('server', sourceRoot)]), 'server');
+  constructor(path, { sourceRoot = defaultSourceRoot, report }) {
+    if (typeof report !== 'function') throw new Error('A server world requires a report function for source file errors.');
+    const packages = Object.fromEntries(['kernel', 'tools', 'server'].map(name => [name, readPackageSync(name, sourceRoot)]));
+    this.runtime = new Runtime({ sources: packages.kernel });
+    requireLoaded(loadSources(this.runtime, [...packages.tools, ...packages.server]), 'server');
     this.debugger = new Debugger(this.runtime);
     this.waiting = new Map();
     this.inFlight = new Set();
@@ -36,6 +38,8 @@ export class ServerWorld {
       schema: () => this.connection.schema(), emptyParameters: () => [],
       close: async () => { await this.connection.close(); return null; },
     });
+    this.sources = new SourceStore({ runtime: this.runtime, packages, report, label: 'server runtime',
+      write: (packageName, fileName, text, version) => writeSourceFile(sourceRoot, packageName, fileName, text, version) });
   }
 
   changed(id) {
@@ -148,6 +152,8 @@ export class ServerWorld {
   }
 
   async close() {
+    await this.sources.settled();
+    this.sources.dispose();
     this.inspectors.dispose();
     for (const result of this.results.values()) { result.slots.rows = null; result.slots.closed = true; }
     this.results.clear();

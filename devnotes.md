@@ -261,5 +261,18 @@ The page writes with HTTP `PUT`, `If-Match`, and `If-None-Match: *`, and the
 server answers 412 when the file changed
 ([RFC 9110, section 13.1](https://www.rfc-editor.org/rfc/rfc9110#section-13.1)).
 After a conflict, the page stops saving that class until it reloads, because
-merging two versions of a class needs a person.  Changes in the server
-runtime are not saved yet.
+merging two versions of a class needs a person.
+
+- [x] Save the server runtime's class changes the same way.
+
+`SourceStore` moved to `src/sources.js` and takes a write function.  The page
+passes one that sends `PUT`, and `ServerWorld` passes one that calls
+`writeSourceFile` in the server process, so both runtimes follow one rule: a
+change to a class with a file writes that file after a version check.  The
+page and server runtimes read the same files, so a page change to a kernel
+class leaves the server runtime's version stale, and the server's next save of
+that class reports a conflict.  A page reload creates a new `ServerWorld`,
+which reads the current files.  The server reports a write failure to the
+page as a session `error` message, which the page shows in Activity.  Server
+component runtimes run in child processes and do not save their changes:
+`writeSourceFile` orders writes within one process only.

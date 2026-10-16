@@ -25,13 +25,14 @@ opens the [disk-usage components](components.md#the-disk-example).
 | `--port PORT` | `0`, which selects a free port | Listening port |
 | `--database FILE` | `:memory:` | SQLite database.  With the default, each page connection has its own empty database. |
 | `--components DIRECTORY` | `.local/components` in the repository | Component store |
-| `--sources DIRECTORY` | `smalltalk` in the repository | Root of the [source packages](manual.md#source-packages) that the page and server runtimes load and the page writes |
+| `--sources DIRECTORY` | `smalltalk` in the repository | Root of the [source packages](manual.md#source-packages) that the page and server runtimes load and write |
 
-The page saves each change to a class in its runtime, from the System Browser,
-the Debugger, the agent, or File in, to that class's file under the sources
-directory.  With the default, the page writes the repository's own source
-files, and git shows the changes.  A class that the System Browser defines or
-files in goes to the `workspace` package.
+The page runtime and the server runtime each save every change to a class,
+from the System Browser, the Debugger, the agent, or File in, to that class's
+file under the sources directory.  With the default, they write the
+repository's own source files, and git shows the changes.  A class that the
+System Browser defines or files in goes to the `workspace` package.  Activity
+reports a failed write from either runtime.
 
 The agent requires a Pi model credential: a login stored in Pi's `auth.json`,
 or a provider key in the environment, such as `OPENAI_API_KEY`.  The server
@@ -349,9 +350,9 @@ test sends a prompt to a model.
 
 The conversation lives in server memory and ends when the page disconnects or
 the server stops.  Each page connection has one agent and one turn at a time.
-Changes in the server runtime, such as methods installed through the Debugger's
-Server realm, are not saved to source files.  When another page or program
-changes a class's file after a page read it, that page stops saving the class
-and reports the conflict in Activity until it reloads.
+Server component runtimes do not save their class changes.  When another
+runtime or program changes a class's file after a runtime read it, that
+runtime stops saving the class and Activity reports the conflict.  Both
+runtimes of a page read the files again when the page reloads.
 A page command that runs longer than 30 seconds, such as a slow inspector
 evaluation, fails its tool call.

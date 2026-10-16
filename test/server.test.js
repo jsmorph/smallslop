@@ -4,8 +4,10 @@ import { ServerWorld, completed } from '../server/world.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 
+const report = error => { throw error; };
+
 test('SQL writes, exact values, and completed result pages share Smallslop objects', async () => {
-  const world = new ServerWorld(':memory:');
+  const world = new ServerWorld(':memory:', { report });
   const execute = async (sql, parameters) => completed(await world.dispatch({ op: 'execute', sql, parameters })).result;
   try {
     await execute('CREATE TABLE items(id INTEGER PRIMARY KEY, text TEXT, bytes BLOB)');
@@ -41,7 +43,7 @@ test('SQL writes, exact values, and completed result pages share Smallslop objec
 });
 
 test('SQL errors and breakpoints preserve server frames for repair', async () => {
-  const world = new ServerWorld(':memory:');
+  const world = new ServerWorld(':memory:', { report });
   try {
     const failed = await world.dispatch({ op: 'execute', sql: 'SELECT value FROM missing' });
     assert.equal(failed.process.stop.reason, 'error');
@@ -70,7 +72,7 @@ test('SQL errors and breakpoints preserve server frames for repair', async () =>
 });
 
 test('server inspectors traverse SQL rows without changing the result position', async () => {
-  const world = new ServerWorld(':memory:');
+  const world = new ServerWorld(':memory:', { report });
   try {
     const result = completed(await world.dispatch({ op: 'execute', sql: 'SELECT 9007199254740993 AS n, NULL AS absent UNION ALL SELECT 7, NULL' })).result;
     const object = world.result(result.id);
@@ -107,7 +109,7 @@ test('server inspectors traverse SQL rows without changing the result position',
 
 test('connections preserve committed writes, roll back on close, and cancel callers', { timeout: 5000 }, async () => {
   const directory = await mkdtemp('/tmp/smallslop-sqlite-test-');
-  let world = new ServerWorld(`${directory}/test.sqlite`);
+  let world = new ServerWorld(`${directory}/test.sqlite`, { report });
   const execute = async sql => completed(await world.dispatch({ op: 'execute', sql }));
   try {
     await execute('CREATE TABLE saved(value INTEGER)');
@@ -115,7 +117,7 @@ test('connections preserve committed writes, roll back on close, and cancel call
     await execute('BEGIN');
     await execute('INSERT INTO saved VALUES (2)');
     await world.close();
-    world = new ServerWorld(`${directory}/test.sqlite`);
+    world = new ServerWorld(`${directory}/test.sqlite`, { report });
     const result = (await execute('SELECT value FROM saved')).result;
     assert.deepEqual(completed(await world.dispatch({ op: 'next', id: result.id })).value, [[{ kind: 'integer', value: '1' }]]);
     await world.dispatch({ op: 'close', id: result.id });

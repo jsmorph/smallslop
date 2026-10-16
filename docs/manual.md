@@ -561,6 +561,7 @@ failures}`, and each failure names its file.
 | `readPackageSync(name, root)`, `readPackage(name, root)` | [`server/source-files.mjs`](../server/source-files.mjs) | The package's files as `{name, text, version}`, sorted by name.  `root` defaults to the repository's `smalltalk/` directory. |
 | `writeSourceFile(root, name, file, text, expectedVersion)` | `server/source-files.mjs` | Write a file if its current version is `expectedVersion`, or `null` for a new file, and return the new version |
 | `fetchSources(names)` | [`ui/sources.js`](../ui/sources.js) | Fetch packages from `/api/smalltalk/<name>` on the page's server and return `{name: files}` |
+| `sourceWriter(base)` | `ui/sources.js` | A write function for `SourceStore` that sends `PUT` to the page's server |
 
 A version is the SHA-256 digest of the file text in base64url.  A write whose
 expected version differs from the file's current version fails with `status`
@@ -582,17 +583,24 @@ The output is `[ 'Inspector' ]`.
 
 `runtime.subscribe(listener)` calls `listener(klass)` after a class is
 defined or redefined and after a method is installed in the class or its
-metaclass, and returns a function that ends the subscription.  `SourceStore`
-in [`ui/sources.js`](../ui/sources.js) uses it to save a page runtime's
-changes.  It records the package and version of each class loaded from a
-package.  After a change, it writes `fileOut(klass)` with a `PUT` to the
-page's server, when the text differs from the saved text.  `adopt(klass,
-packageName)` gives a new class a file, in the `workspace` package by default.
-A class with no file, such as a component class, is not saved.  When the
-server answers 412, the store reports the conflict, stops saving that class,
-and leaves the file as it is.  `createWorkspace` creates the store as
+metaclass, and returns a function that ends the subscription.  `new
+SourceStore({runtime, packages, write, report, label, defaultPackage})` in
+`src/sources.js` uses it to save a runtime's changes.  It records the package
+and version of each class loaded from `packages`.  After a change, it calls
+`write(packageName, fileName, fileOut(klass), version)` when the text differs
+from the saved text, and `write` returns the new version.  `adopt(klass,
+packageName)` gives a new class a file, in `defaultPackage` unless another
+package is named.  A class with no file, such as a component class, is not
+saved.  When `write` fails with `status` 412, the store reports the conflict
+through `report`, naming the runtime by `label`, stops saving that class, and
+leaves the file as it is.  `settled()` waits for pending writes, and
+`dispose()` ends the subscription.
+
+The page and the server runtime each save their own changes.
+`createWorkspace` creates a store with `sourceWriter()` as
 `workspace.sources`, and the System Browser adopts the classes it defines or
-files in.
+files in, in the `workspace` package.  `ServerWorld` creates a store that
+calls `writeSourceFile` in the server process.
 
 ## Exceptions
 
@@ -1391,9 +1399,11 @@ code](../examples/repair.js) that `npm run demo` runs in Node.
 
 `ServerWorld` in [`server/world.mjs`](../server/world.mjs) is a Smallslop
 runtime for Node with a `Database` object.  `new ServerWorld(path,
-{sourceRoot})` reads its packages from `sourceRoot`, which defaults to the
-repository's `smalltalk/` directory.  It opens the SQLite database at `path`,
-or a private in-memory database for `:memory:`.
+{sourceRoot, report})` reads its packages from `sourceRoot`, which defaults to
+the repository's `smalltalk/` directory, and writes each class change back to
+that class's file.  It calls `report(error)` when a write fails, and `close()`
+waits for pending writes.  It opens the SQLite database at `path`, or a
+private in-memory database for `:memory:`.
 SQL runs in a separate process, so the server debugger can respond while a
 statement runs.  [Agent and Web Server](agent.md#server-commands) lists the
 commands that `dispatch(request, {signal})` accepts.

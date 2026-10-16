@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { createServer, request as httpRequest } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { createSmallslopServer } from '../server/server.mjs';
 import { SessionConnection } from '../ui/session-connection.js';
 import { acceptWebSocket } from '../server/ws.mjs';
+import { sourceRoot } from '../server/source-files.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -249,5 +250,21 @@ test('a connection whose unsent output exceeds its limit closes', { timeout: 100
   } finally {
     socket.destroy();
     server.close();
+  }
+});
+
+test('the page receives source file errors from its server runtime', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-root-'));
+  await cp(sourceRoot, directory, { recursive: true });
+  const { app, port } = await start({ sourceRoot: directory });
+  const { promise: reported, resolve } = Promise.withResolvers();
+  try {
+    const connection = await connect(port, { error: resolve });
+    await writeFile(path.join(directory, 'kernel', 'Integer.st'), 'edited elsewhere');
+    await connection.server({ op: 'debug', request: { op: 'install', className: 'Integer', source: 'doubledForTest ^self * 2' } });
+    assert.equal((await reported).message, "kernel/Integer.st changed after the server runtime read it.  The server runtime's changes to Integer are not saved.  Reload the page to load the current file.");
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });

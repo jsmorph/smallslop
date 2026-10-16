@@ -106,7 +106,6 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     }
     const connection = acceptWebSocket(request, socket);
     if (!connection) return;
-    const world = new ServerWorld(databasePath, { sourceRoot });
     const state = { id: randomUUID(), status: 'Ready', model: '', messages: [] };
     const pending = new Map();
     let runner = null;
@@ -116,6 +115,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     let closed = false;
     let nextCommand = 1;
     const send = message => { if (!closed) connection.send(JSON.stringify(message)); };
+    const world = new ServerWorld(databasePath, { sourceRoot, report: error => { if (closed) server.emit('error', error); else send({ type: 'error', error: errorData(error) }); } });
     const publish = () => send({ type: 'status', status: state.status, model: state.model });
     const append = event => {
       const message = { ...event, id: state.messages.length + 1 };

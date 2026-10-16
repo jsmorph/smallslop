@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Runtime, fileOut } from '../src/index.js';
-import { loadSources } from '../src/sources.js';
-import { readPackage, readPackageSync, sourceVersion, writeSourceFile } from '../server/source-files.mjs';
+import { SourceStore, loadSources } from '../src/sources.js';
+import { readPackage, readPackageSync, sourceRoot, sourceVersion, writeSourceFile } from '../server/source-files.mjs';
 import { createSmallslopServer } from '../server/server.mjs';
-import { SourceStore } from '../ui/sources.js';
+import { sourceWriter } from '../ui/sources.js';
+import { ServerWorld } from '../server/world.mjs';
 import { readFileSync } from 'node:fs';
 
 const kernel = readPackageSync('kernel');
@@ -138,7 +139,7 @@ test('the page source store writes changed classes and stops at a conflicting fi
     const runtime = new Runtime({ sources: kernel });
     const packages = { user: readPackageSync('user', root) };
     loadSources(runtime, packages.user);
-    store = new SourceStore({ runtime, packages, report: error => reports.push(error.message), base, defaultPackage: 'user' });
+    store = new SourceStore({ runtime, packages, write: sourceWriter(base), report: error => reports.push(error.message), label: 'page runtime', defaultPackage: 'user' });
     const being = runtime.classes.get('Being');
 
     runtime.installSource(being, 'kind ^#being', { protocol: 'accessing' });
@@ -165,10 +166,37 @@ test('the page source store writes changed classes and stops at a conflicting fi
     runtime.installSource(being, 'third ^3');
     await store.settled();
     assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'edited elsewhere');
-    assert.deepEqual(reports, ["user/Being.st changed on the server after this page read it.  The page's changes to Being are not saved.  Reload the page to load the current file."]);
+    assert.deepEqual(reports, ["user/Being.st changed after the page runtime read it.  The page runtime's changes to Being are not saved.  Reload the page to load the current file."]);
   } finally {
     store?.dispose();
     await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the server runtime writes its class changes to their source files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
+  const reports = [];
+  let world;
+  try {
+    await cp(sourceRoot, root, { recursive: true });
+    world = new ServerWorld(':memory:', { sourceRoot: root, report: error => reports.push(error.message) });
+    const install = source => world.dispatch({ op: 'debug', request: { op: 'install', className: 'Integer', source } });
+    await install('doubledForTest ^self * 2');
+    await world.sources.settled();
+    const integer = world.runtime.classes.get('Integer');
+    assert.equal(await readFile(join(root, 'kernel', 'Integer.st'), 'utf8'), fileOut(integer));
+    assert.match(fileOut(integer), /\nInteger method!\ndoubledForTest \^self \* 2!\n/);
+
+    await writeFile(join(root, 'kernel', 'Integer.st'), 'edited elsewhere');
+    await install('tripledForTest ^self * 3');
+    await world.close();
+    world = null;
+    assert.equal(await readFile(join(root, 'kernel', 'Integer.st'), 'utf8'), 'edited elsewhere');
+    assert.deepEqual(reports, ["kernel/Integer.st changed after the server runtime read it.  The server runtime's changes to Integer are not saved.  Reload the page to load the current file."]);
+    assert.throws(() => new ServerWorld(':memory:', { sourceRoot: root }), /requires a report function/);
+  } finally {
+    await world?.close();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,4 @@
-import { Block, SmallClass, SmallObject } from './runtime.js';
+import { Block, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './runtime.js';
 import { HostOperation, HostValue } from './host-value.js';
 
 export class Host {
@@ -34,14 +34,16 @@ export class Host {
   }
 
   #name(name) {
-    if (typeof name !== 'string') throw new Error('Host property names must be strings.');
+    if (name instanceof SmallSymbol) return name.name;
+    if (typeof name !== 'string') throw new Error('Host property names must be Strings or Symbols.');
     return name;
   }
 
   value(value) {
     if (value === undefined) return this.undefined;
     if (value === null || ['boolean', 'bigint', 'number', 'string'].includes(typeof value)) return value;
-    if (value instanceof SmallObject || value instanceof SmallClass || value instanceof Block || value instanceof HostValue) {
+    if (value instanceof SmallObject || value instanceof SmallClass || value instanceof Block || value instanceof HostValue
+        || value instanceof SmallSymbol || value instanceof SmallCharacter) {
       this.runtime.classOf(value);
       return value;
     }
@@ -56,6 +58,8 @@ export class Host {
 
   unwrap(value) {
     this.runtime.classOf(value);
+    if (value instanceof SmallSymbol) return value.name;
+    if (value instanceof SmallCharacter) return value.text;
     return value instanceof HostValue ? value.value : value;
   }
 

@@ -1,9 +1,46 @@
 import { Code, assemble } from './bytecode.js';
-import { SendCall, SmallClass, SmallObject } from './objects.js';
+import { SendCall, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './objects.js';
 
 function selectorName(value) {
+  if (value instanceof SmallSymbol && value.name) return value.name;
   if (typeof value === 'string' && value) return value;
-  throw new Error('A selector must be a nonempty String.');
+  throw new Error('A selector must be a nonempty Symbol or String.');
+}
+
+function installTextProtocol(runtime) {
+  const protocol = (name, selector, arity, invoke, category) => runtime.primitive(runtime.classes.get(name), selector, arity, invoke, { protocol: category });
+  protocol('String', 'asString', 0, receiver => receiver instanceof SmallSymbol ? receiver.name : receiver, 'converting');
+  protocol('String', 'asSymbol', 0, receiver => receiver instanceof SmallSymbol ? receiver : SmallSymbol.of(receiver), 'converting');
+  protocol('Symbol', 'numArgs', 0, receiver => {
+    const name = receiver.name;
+    if (/^[+*/\\~<>=@%&,?!|-]+$/.test(name)) return 1n;
+    return BigInt((name.match(/:/g) ?? []).length);
+  }, 'accessing');
+  const character = (selector, invoke, category) => protocol('Character', selector, 0, invoke, category);
+  const test = (selector, pattern) => character(selector, receiver => pattern.test(receiver.text), 'testing');
+  character('codePoint', receiver => BigInt(receiver.codePoint), 'accessing');
+  character('value', receiver => BigInt(receiver.codePoint), 'accessing');
+  character('asInteger', receiver => BigInt(receiver.codePoint), 'converting');
+  character('asCharacter', receiver => receiver, 'converting');
+  character('asString', receiver => receiver.text, 'converting');
+  character('asSymbol', receiver => SmallSymbol.of(receiver.text), 'converting');
+  const changeCase = upper => receiver => {
+    const changed = upper ? receiver.text.toUpperCase() : receiver.text.toLowerCase();
+    return [...changed].length === 1 ? SmallCharacter.of(changed.codePointAt(0)) : receiver;
+  };
+  character('asUppercase', changeCase(true), 'converting');
+  character('asLowercase', changeCase(false), 'converting');
+  test('isLetter', /^\p{L}$/u);
+  test('isDigit', /^\p{Nd}$/u);
+  test('isAlphaNumeric', /^[\p{L}\p{Nd}]$/u);
+  test('isUppercase', /^\p{Lu}$/u);
+  test('isLowercase', /^\p{Ll}$/u);
+  test('isVowel', /^[aeiouAEIOU]$/);
+  test('isSeparator', /^[ \t\n\r\f]$/);
+  protocol('Integer', 'asCharacter', 0, receiver => {
+    if (receiver < 0n || receiver > 0x10ffffn) throw new Error('asCharacter requires a code point from 0 through 1114111.');
+    return SmallCharacter.of(Number(receiver));
+  }, 'converting');
 }
 
 function requireClass(value) {
@@ -62,7 +99,7 @@ function installObjectProtocol(runtime) {
   }, 'accessing class hierarchy');
   protocol(klass, 'instVarNames', 0, receiver => receiver.slots.slice(receiver.superclass?.slots.length ?? 0), 'accessing instance variables');
   protocol(klass, 'allInstVarNames', 0, receiver => [...receiver.slots], 'accessing instance variables');
-  protocol(klass, 'selectors', 0, receiver => [...receiver.methods.keys()].sort(), 'accessing methods');
+  protocol(klass, 'selectors', 0, receiver => [...receiver.methods.keys()].sort().map(name => SmallSymbol.of(name)), 'accessing methods');
   protocol(klass, 'includesSelector:', 1, (receiver, [selector]) => receiver.methods.has(selectorName(selector)), 'testing methods');
   protocol(klass, 'canUnderstand:', 1, (receiver, [selector]) => runtime.lookup(receiver, selectorName(selector)) !== null, 'testing methods');
   protocol(klass, 'inheritsFrom:', 1, (receiver, [other]) => {
@@ -122,6 +159,7 @@ export function installKernel(runtime) {
     });
   }
   installObjectProtocol(runtime);
+  installTextProtocol(runtime);
   runtime.install(runtime.classes.get('Block'), 'whileTrue:', new Code({
     args: ['body'], literals: ['value', null], source: 'whileTrue: body',
     bytes: assemble([

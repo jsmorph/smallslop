@@ -1,7 +1,11 @@
+import { SmallCharacter, SmallSymbol } from '../src/objects.js';
+
 export function encode(value) {
   if (typeof value === 'bigint') return { kind: 'integer', value: String(value) };
   if (typeof value === 'number' && !Number.isFinite(value)) return { kind: 'float', value: String(value) };
   if (value instanceof Uint8Array) return { kind: 'bytes', value: [...value] };
+  if (value instanceof SmallSymbol) return { kind: 'symbol', value: value.name };
+  if (value instanceof SmallCharacter) return { kind: 'character', value: value.codePoint };
   if (Array.isArray(value)) return value.map(encode);
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encode(item)]));
   return value;
@@ -10,6 +14,10 @@ export function encode(value) {
 export function parameter(value) {
   if (value instanceof Uint8Array) return value;
   if (value === null || ['string', 'bigint', 'number'].includes(typeof value)) return value;
+  if (value instanceof SmallSymbol) return value.name;
+  if (value instanceof SmallCharacter) return value.text;
+  if (value?.kind === 'symbol' && typeof value.value === 'string') return value.value;
+  if (value?.kind === 'character' && Number.isInteger(value.value)) return SmallCharacter.of(value.value).text;
   if (value?.kind === 'nil') return null;
   if (value?.kind === 'string' && typeof value.value === 'string') return value.value;
   if (value?.kind === 'float' && typeof value.value === 'number') return value.value;

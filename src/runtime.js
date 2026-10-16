@@ -3,9 +3,9 @@ import { compileExpression, compileMethod } from './compiler.js';
 import { installKernel } from './kernel.js';
 import { WeakRegistry } from './weak-registry.js';
 import { HostOperation, HostValue } from './host-value.js';
-import { BlockCall, SendCall, SmallClass, SmallObject } from './objects.js';
+import { BlockCall, SendCall, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './objects.js';
 
-export { SmallClass, SmallObject };
+export { SmallCharacter, SmallClass, SmallObject, SmallSymbol };
 
 class Environment {
   constructor(names, values, parent = null) {
@@ -65,6 +65,8 @@ export class Runtime {
     }
     this.defineClass('True', { superclass: this.classes.get('Boolean'), category: 'Kernel-Objects' });
     this.defineClass('False', { superclass: this.classes.get('Boolean'), category: 'Kernel-Objects' });
+    this.defineClass('Symbol', { superclass: this.classes.get('String'), category: 'Kernel-Objects' });
+    this.defineClass('Character', { category: 'Kernel-Objects' });
     this.nativeClasses = new Set([...this.classes.values()].filter(klass => klass !== this.objectClass));
     this.primitive(this.objectClass, 'yourself', 0, receiver => receiver);
     this.primitive(this.objectClass, 'class', 0, receiver => this.classOf(receiver));
@@ -121,6 +123,8 @@ export class Runtime {
       if (value.runtime !== this) throw new Error('Class belongs to another runtime.');
       return this.classes.get('Class');
     }
+    if (value instanceof SmallSymbol) return this.classes.get('Symbol');
+    if (value instanceof SmallCharacter) return this.classes.get('Character');
     if (value instanceof Block) {
       if (value.method.owner.runtime !== this) throw new Error('Block belongs to another runtime.');
       return this.classes.get('Block');
@@ -493,6 +497,7 @@ export class Runtime {
         break;
       }
       case Op.pop: need(1); stack.pop(); break;
+      case Op.dup: need(1); stack.push(stack.at(-1)); break;
       case Op.send:
       case Op.superSend: {
         const count = args[1];

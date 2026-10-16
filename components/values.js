@@ -1,3 +1,5 @@
+import { SmallCharacter, SmallSymbol } from '../src/objects.js';
+
 const textEncoder = new TextEncoder();
 
 export function checkSize(value, maxBytes) {
@@ -18,6 +20,8 @@ export function encode(value, { reference = () => null, maxBytes = 1024 * 1024, 
     if (typeof item === 'bigint') return { kind: 'integer', value: String(item) };
     if (typeof item === 'number') return { kind: 'float', value: Object.is(item, -0) ? '-0' : Number.isFinite(item) ? item : String(item) };
     if (typeof item === 'boolean' || typeof item === 'string') return { kind: typeof item, value: item };
+    if (item instanceof SmallSymbol) return { kind: 'symbol', value: item.name };
+    if (item instanceof SmallCharacter) return { kind: 'character', value: item.codePoint };
     const target = reference(item);
     if (target) return { kind: 'reference', value: target };
     if (item instanceof Uint8Array) {
@@ -60,6 +64,8 @@ export function decode(value, { reference = value => value, maxBytes = 1024 * 10
         if (['-0', 'NaN', 'Infinity', '-Infinity'].includes(item.value)) return Number(item.value);
         break;
       case 'string': case 'boolean': if (typeof item.value === item.kind) return item.value; break;
+      case 'symbol': if (typeof item.value === 'string') return SmallSymbol.of(item.value); break;
+      case 'character': if (Number.isInteger(item.value)) return SmallCharacter.of(item.value); break;
       case 'bytes':
         if (Array.isArray(item.value) && item.value.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255)) return Uint8Array.from(item.value);
         break;

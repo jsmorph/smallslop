@@ -189,6 +189,8 @@ reference record.
 | Number | `{kind: 'float', value: 2.5}`, or the strings `'-0'`, `'NaN'`, `'Infinity'`, and `'-Infinity'` |
 | Boolean, string | `{kind: 'boolean', value: true}`, `{kind: 'string', value: 'text'}` |
 | `Uint8Array` | `{kind: 'bytes', value: [0, 255]}` |
+| Symbol | `{kind: 'symbol', value: 'name'}` |
+| Character | `{kind: 'character', value: 97}`, with the code point |
 | Array | `{kind: 'array', value: [...]}` |
 | Plain object | `{kind: 'record', value: {...}}` |
 | Registered component object | `{kind: 'reference', value: reference}` |

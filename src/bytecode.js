@@ -1,10 +1,10 @@
 export const Op = Object.freeze({
   constant: 0, self: 1, read: 2, write: 3, slot: 4, storeSlot: 5,
   send: 6, superSend: 7, block: 8, pop: 9, return: 10,
-  nonlocalReturn: 11, jump: 12, jumpFalse: 13, global: 14,
+  nonlocalReturn: 11, jump: 12, jumpFalse: 13, global: 14, dup: 15,
 });
 
-const operands = Object.freeze([1, 0, 2, 2, 1, 1, 2, 2, 1, 0, 0, 0, 1, 1, 1]);
+const operands = Object.freeze([1, 0, 2, 2, 1, 1, 2, 2, 1, 0, 0, 0, 1, 1, 1, 0]);
 const names = Object.keys(Op);
 
 export function assemble(instructions) {
@@ -98,10 +98,10 @@ export class Code {
       depths.set(pc, depth);
       const { op, args: values, next } = decode(this.bytes, pc);
       const required = [Op.send, Op.superSend].includes(op) ? values[1] + 1
-        : [Op.write, Op.storeSlot, Op.pop, Op.return, Op.nonlocalReturn, Op.jumpFalse].includes(op) ? 1 : 0;
+        : [Op.write, Op.storeSlot, Op.pop, Op.return, Op.nonlocalReturn, Op.jumpFalse, Op.dup].includes(op) ? 1 : 0;
       if (depth < required) throw new Error(`Operand stack underflow at ${pc}.`);
       if ([Op.return, Op.nonlocalReturn].includes(op)) continue;
-      const change = [Op.constant, Op.self, Op.read, Op.slot, Op.block, Op.global].includes(op) ? 1
+      const change = [Op.constant, Op.self, Op.read, Op.slot, Op.block, Op.global, Op.dup].includes(op) ? 1
         : [Op.pop, Op.jumpFalse].includes(op) ? -1
           : [Op.send, Op.superSend].includes(op) ? -values[1] : 0;
       if (op !== Op.jump) pending.push([next, depth + change]);

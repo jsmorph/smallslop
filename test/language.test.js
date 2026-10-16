@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Runtime } from '../src/index.js';
+import { Debugger, Host, ProcessRunner, Runtime, SmallCharacter, SmallSymbol } from '../src/index.js';
+import { decode, encode } from '../components/values.js';
+import { encode as sqlEncode, parameters } from '../server/values.js';
 
 function run(runtime, source) {
   const state = runtime.run(runtime.evaluate(source));
@@ -50,7 +52,7 @@ test('perform reports a missing method at the perform send, and retry repeats it
   runtime.installSource(klass, "greet ^'hello'");
   assert.equal(runtime.retry(processId).result, 'hello');
   assert.throws(() => run(runtime, "Greeter new perform: 'greet' with: 1"), /greet expects 0 arguments/);
-  assert.throws(() => run(runtime, 'Greeter new perform: 3'), /selector must be a nonempty String/);
+  assert.throws(() => run(runtime, 'Greeter new perform: 3'), /selector must be a nonempty Symbol or String/);
   assert.throws(() => run(runtime, "nil error: 'Stopped here.'"), /Stopped here/);
 });
 
@@ -67,9 +69,89 @@ test('classes describe their names, hierarchy, variables, and methods', () => {
   assert.deepEqual(run(runtime, 'Circle allSuperclasses'), [shape, runtime.classes.get('Object')]);
   assert.deepEqual(run(runtime, 'Circle instVarNames'), ['radius']);
   assert.deepEqual(run(runtime, 'Circle allInstVarNames'), ['origin', 'radius']);
-  assert.deepEqual(run(runtime, 'Circle selectors'), ['radius']);
+  assert.deepEqual(run(runtime, 'Circle selectors'), [SmallSymbol.of('radius')]);
   assert.equal(run(runtime, "Circle includesSelector: 'radius'"), true);
   assert.equal(run(runtime, "Circle canUnderstand: 'isNil'"), true);
   assert.equal(run(runtime, 'Circle inheritsFrom: Shape'), true);
   assert.equal(run(runtime, 'Shape inheritsFrom: Shape'), false);
+});
+
+test('symbols and characters are interned literal objects', () => {
+  const runtime = new Runtime();
+  const symbol = run(runtime, '#at:put:');
+  assert.equal(symbol, SmallSymbol.of('at:put:'));
+  assert.equal(run(runtime, '#foo == #foo'), true);
+  assert.equal(run(runtime, "#foo = 'foo'"), false);
+  assert.equal(run(runtime, "'foo' asSymbol == #foo"), true);
+  assert.equal(run(runtime, '#foo asString'), 'foo');
+  assert.equal(run(runtime, "#'two words'"), SmallSymbol.of('two words'));
+  assert.equal(run(runtime, '#at:put: numArgs'), 2n);
+  assert.equal(run(runtime, '#+ numArgs'), 1n);
+  assert.equal(run(runtime, '#size numArgs'), 0n);
+  assert.equal(run(runtime, '#foo class'), runtime.classes.get('Symbol'));
+  assert.equal(run(runtime, '#foo class superclass'), runtime.classes.get('String'));
+  assert.equal(run(runtime, '$a'), SmallCharacter.of(97));
+  assert.equal(run(runtime, '97 asCharacter == $a'), true);
+  assert.equal(run(runtime, '$a asUppercase'), SmallCharacter.of(65));
+  assert.equal(run(runtime, '$1 isDigit and: [$a isLetter]'), true);
+  assert.equal(run(runtime, '$  isSeparator'), true);
+  assert.equal(run(runtime, '$a codePoint'), 97n);
+});
+
+test('literal arrays are frozen and accept only literals, nil, true, and false', () => {
+  const runtime = new Runtime();
+  const array = run(runtime, "#(1 -2 2.5 'text' #sym $c #(3) nil true false)");
+  assert.deepEqual(array, [1n, -2n, 2.5, 'text', SmallSymbol.of('sym'), SmallCharacter.of(99), [3n], null, true, false]);
+  assert.equal(Object.isFrozen(array), true);
+  assert.equal(Object.isFrozen(array[6]), true);
+  assert.throws(() => runtime.evaluate('#(foo)'), /literal array element/);
+  assert.throws(() => runtime.evaluate('#(1'), /Unterminated literal array/);
+});
+
+test('radix integers and ANSI exponent letters are numbers', () => {
+  const runtime = new Runtime();
+  assert.equal(run(runtime, '16r1F'), 31n);
+  assert.equal(run(runtime, '-2r1010'), -10n);
+  assert.equal(run(runtime, '36rZ'), 35n);
+  assert.equal(run(runtime, '1.5d2'), 150);
+  assert.equal(run(runtime, '2.5q-1'), 0.25);
+  assert.throws(() => runtime.evaluate('2r102'), /Digit 2 is not valid in radix 2/);
+  assert.throws(() => runtime.evaluate('37r1'), /radix must be from 2 through 36/);
+});
+
+test('cascades send each message to the receiver of the first message', () => {
+  const runtime = new Runtime();
+  const counter = runtime.defineClass('Counter', { slots: ['count'] });
+  runtime.installSource(counter, 'increment count isNil ifTrue: [count := 0]. count := count + 1');
+  runtime.installSource(counter, 'count ^count');
+  assert.equal(run(runtime, 'Counter new increment; increment; count'), 2n);
+  assert.equal(run(runtime, '3 + 4; * 10'), 30n);
+  assert.equal(run(runtime, '| c | c := Counter new. c increment increment; count'), 2n, 'the cascade receiver is c increment');
+  const base = runtime.defineClass('Base');
+  const derived = runtime.defineClass('Derived', { superclass: base, slots: ['log'] });
+  runtime.installSource(base, "name ^'base'");
+  runtime.installSource(derived, "name ^'derived'");
+  runtime.installSource(derived, 'both ^super name; name');
+  assert.equal(run(runtime, 'Derived new both'), 'base');
+  assert.throws(() => runtime.evaluate('3; foo'), /cascade needs a message/);
+  assert.throws(() => runtime.evaluate('3 foo;'), /Expected a message after ;/);
+});
+
+test('symbols and characters cross the debugger, component, SQL, and host boundaries', () => {
+  const runtime = new Runtime();
+  const debugger_ = new Debugger(runtime);
+  assert.deepEqual(debugger_.value(SmallSymbol.of('foo')), { kind: 'symbol', value: 'foo' });
+  assert.deepEqual(debugger_.value(SmallCharacter.of(97)), { kind: 'character', value: 97 });
+  assert.equal(debugger_.decode({ kind: 'symbol', value: 'foo' }), SmallSymbol.of('foo'));
+  assert.equal(debugger_.decode({ kind: 'character', value: 97 }), SmallCharacter.of(97));
+  const encoded = encode([SmallSymbol.of('x'), SmallCharacter.of(0x1f600)]);
+  assert.deepEqual(decode(JSON.parse(JSON.stringify(encoded))), [SmallSymbol.of('x'), SmallCharacter.of(0x1f600)]);
+  assert.deepEqual(parameters([SmallSymbol.of('x'), { kind: 'character', value: 98 }]), ['x', 'b']);
+  assert.deepEqual(sqlEncode([SmallSymbol.of('x')]), [{ kind: 'symbol', value: 'x' }]);
+  const runner = new ProcessRunner(runtime);
+  const host = new Host(runtime, runner);
+  const target = host.value({ joined: (a, b) => `${a}${b}` });
+  const processId = runtime.start(target, 'call:with:with:', [SmallSymbol.of('joined'), SmallSymbol.of('a'), SmallCharacter.of(98)]);
+  assert.equal(runtime.run(processId).result, 'ab');
+  runner.close();
 });

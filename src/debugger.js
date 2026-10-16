@@ -1,5 +1,5 @@
 import { Code, Op, decode } from './bytecode.js';
-import { Block, SmallClass, SmallObject } from './runtime.js';
+import { Block, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './runtime.js';
 import { HostValue } from './host-value.js';
 
 export class Debugger {
@@ -19,6 +19,8 @@ export class Debugger {
       return { kind: 'float', value: Object.is(value, -0) ? '-0' : Number.isFinite(value) ? value : String(value) };
     }
     if (typeof value === 'boolean' || typeof value === 'string') return { kind: typeof value, value };
+    if (value instanceof SmallSymbol) return { kind: 'symbol', value: value.name };
+    if (value instanceof SmallCharacter) return { kind: 'character', value: value.codePoint };
     let id = this.ids.get(value);
     if (id === undefined) {
       id = this.nextId++;
@@ -41,7 +43,9 @@ export class Debugger {
         if (['-0', 'NaN', 'Infinity', '-Infinity'].includes(value.value)) return Number(value.value);
         break;
       case 'boolean':
-      case 'string': if (typeof value.value === value.kind) return value.value;
+      case 'string': if (typeof value.value === value.kind) return value.value; break;
+      case 'symbol': if (typeof value.value === 'string') return SmallSymbol.of(value.value); break;
+      case 'character': if (Number.isInteger(value.value)) return SmallCharacter.of(value.value); break;
     }
     throw new Error('Invalid debugger value.');
   }

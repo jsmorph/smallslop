@@ -1,4 +1,5 @@
 import { Code, assemble } from './bytecode.js';
+import { SmallCharacter, SmallSymbol } from './objects.js';
 
 const reserved = new Set(['self', 'super', 'nil', 'true', 'false']);
 
@@ -25,24 +26,53 @@ function tokenize(source) {
       offset = end + 1;
       continue;
     }
-    if (char === "'") {
+    const quoted = () => {
       offset++;
       let value = '';
-      let closed = false;
       while (offset < source.length) {
         const next = source[offset++];
         if (next !== "'") value += next;
         else if (source[offset] === "'") { value += "'"; offset++; }
-        else { closed = true; break; }
+        else return value;
       }
-      if (!closed) fail(source, start, 'Unterminated string');
-      add('string', value, start);
+      fail(source, start, 'Unterminated string');
+    };
+    if (char === "'") { add('string', quoted(), start); continue; }
+    if (char === '$') {
+      const codePoint = source.codePointAt(offset + 1);
+      if (codePoint === undefined) fail(source, start, 'Expected a character after $');
+      offset += codePoint > 0xffff ? 3 : 2;
+      add('character', SmallCharacter.of(codePoint), start);
       continue;
     }
-    const number = source.slice(offset).match(/^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+    if (char === '#') {
+      const rest = source.slice(offset + 1);
+      if (rest.startsWith('(')) { offset += 2; add('#(', '#(', start); continue; }
+      if (rest.startsWith("'")) { offset++; add('symbol', SmallSymbol.of(quoted()), start); continue; }
+      const selector = rest.match(/^(?:[A-Za-z_][A-Za-z_0-9]*:)+/) ?? rest.match(/^[A-Za-z_][A-Za-z_0-9]*/) ?? rest.match(/^[+*/\\~<>=@%&,?!|-]+/);
+      if (!selector) fail(source, start, 'Expected a symbol after #');
+      offset += 1 + selector[0].length;
+      add('symbol', SmallSymbol.of(selector[0]), start);
+      continue;
+    }
+    const radix = source.slice(offset).match(/^(\d+)r([0-9A-Z]+)/);
+    if (radix) {
+      const base = Number(radix[1]);
+      if (base < 2 || base > 36) fail(source, start, 'A radix must be from 2 through 36');
+      let value = 0n;
+      for (const digit of radix[2]) {
+        const digitValue = parseInt(digit, 36);
+        if (digitValue >= base) fail(source, start, `Digit ${digit} is not valid in radix ${base}`);
+        value = value * BigInt(base) + BigInt(digitValue);
+      }
+      offset += radix[0].length;
+      add('number', value, start);
+      continue;
+    }
+    const number = source.slice(offset).match(/^\d+(?:\.\d+)?(?:[eEdq][+-]?\d+)?/);
     if (number) {
       offset += number[0].length;
-      add('number', /[.eE]/.test(number[0]) ? Number(number[0]) : BigInt(number[0]), start);
+      add('number', /[.eEdq]/.test(number[0]) ? Number(number[0].replace(/[dq]/, 'e')) : BigInt(number[0]), start);
       continue;
     }
     const name = source.slice(offset).match(/^[A-Za-z_][A-Za-z_0-9]*/);
@@ -55,7 +85,7 @@ function tokenize(source) {
       continue;
     }
     if (source.startsWith(':=', offset)) { offset += 2; add('assign', ':=', start); continue; }
-    if ('()[]^.|:'.includes(char)) { offset++; add(char, char, start); continue; }
+    if ('()[]^.|:;'.includes(char)) { offset++; add(char, char, start); continue; }
     const binary = source.slice(offset).match(/^[+*/\\~<>=@%&,?!-]+/);
     if (binary) { offset += binary[0].length; add('binary', binary[0], start); continue; }
     fail(source, start, `Unexpected character ${JSON.stringify(char)}`);
@@ -134,31 +164,46 @@ class Parser {
       const value = this.expression();
       return { type: 'assign', name: name.value, value, start: name.start, end: value.end };
     }
-    let receiver = this.binary();
+    const value = this.messages(this.primary());
+    if (this.current.kind !== ';') return value;
+    if (value.type !== 'send') fail(this.source, this.current.start, 'A cascade needs a message before ;');
+    const receiver = value.receiver;
+    const placeholder = { type: 'cascadeReceiver', super: receiver.type === 'variable' && receiver.name === 'super',
+      start: receiver.start, end: receiver.end };
+    const parts = [{ ...value, receiver: placeholder }];
+    while (this.accept(';')) {
+      const part = this.messages(placeholder);
+      if (part === placeholder) fail(this.source, this.current.start, 'Expected a message after ;');
+      parts.push(part);
+    }
+    return { type: 'cascade', receiver, parts, start: value.start, end: parts.at(-1).end };
+  }
+
+  messages(receiver) {
+    let node = this.unaryMessages(receiver);
+    node = this.binaryMessages(node);
     if (this.current.kind === 'keyword') {
       let selector = '';
       const args = [];
       while (this.current.kind === 'keyword') {
         selector += this.take().value;
-        args.push(this.binary());
+        args.push(this.binaryMessages(this.unaryMessages(this.primary())));
       }
-      receiver = { type: 'send', receiver, selector, args, start: receiver.start, end: args.at(-1).end };
+      node = { type: 'send', receiver: node, selector, args, start: node.start, end: args.at(-1).end };
     }
-    return receiver;
+    return node;
   }
 
-  binary() {
-    let receiver = this.unary();
+  binaryMessages(receiver) {
     while (this.current.kind === 'binary' || this.current.kind === '|') {
       const selector = this.take().value;
-      const argument = this.unary();
+      const argument = this.unaryMessages(this.primary());
       receiver = { type: 'send', receiver, selector, args: [argument], start: receiver.start, end: argument.end };
     }
     return receiver;
   }
 
-  unary() {
-    let receiver = this.primary();
+  unaryMessages(receiver) {
     while (this.current.kind === 'name') {
       const selector = this.take();
       receiver = { type: 'send', receiver, selector: selector.value, args: [], start: receiver.start, end: selector.end };
@@ -166,12 +211,31 @@ class Parser {
     return receiver;
   }
 
+  literalArray(open) {
+    const values = [];
+    while (!this.accept(')')) {
+      const token = this.current;
+      if (['number', 'string', 'symbol', 'character'].includes(token.kind)) values.push(this.take().value);
+      else if (token.kind === 'binary' && token.value === '-' && this.tokens[this.index + 1].kind === 'number') {
+        this.take();
+        values.push(-this.take().value);
+      } else if (token.kind === '#(') { this.take(); values.push(this.literalArray(token).value); }
+      else if (token.kind === 'name' && ['nil', 'true', 'false'].includes(token.value)) {
+        this.take();
+        values.push(({ nil: null, true: true, false: false })[token.value]);
+      } else if (token.kind === 'end') fail(this.source, open.start, 'Unterminated literal array');
+      else fail(this.source, token.start, 'A literal array element must be a literal, nil, true, or false');
+    }
+    return { type: 'literal', value: Object.freeze(values), start: open.start, end: this.tokens[this.index - 1].end };
+  }
+
   primary() {
     const token = this.current;
-    if (['number', 'string'].includes(token.kind)) {
+    if (['number', 'string', 'symbol', 'character'].includes(token.kind)) {
       this.take();
       return { ...token, type: 'literal' };
     }
+    if (token.kind === '#(') { this.take(); return this.literalArray(token); }
     if (token.kind === 'binary' && token.value === '-' && this.tokens[this.index + 1].kind === 'number') {
       this.take();
       const value = this.take('number');
@@ -253,11 +317,24 @@ class Emitter {
         break;
       case 'assign': this.expression(node.value); this.binding(node, true); break;
       case 'send': {
-        const superSend = node.receiver.type === 'variable' && node.receiver.name === 'super';
+        const superSend = node.receiver.type === 'variable' && node.receiver.name === 'super'
+          || node.receiver.type === 'cascadeReceiver' && node.receiver.super;
         if (superSend) this.emit(node.receiver, 'self');
         else this.expression(node.receiver);
         for (const argument of node.args) this.expression(argument);
         this.emit(node, superSend ? 'superSend' : 'send', this.literal(node.selector), node.args.length);
+        break;
+      }
+      case 'cascadeReceiver': break;
+      case 'cascade': {
+        const superCascade = node.receiver.type === 'variable' && node.receiver.name === 'super';
+        if (!superCascade) this.expression(node.receiver);
+        node.parts.forEach((part, index) => {
+          const last = index === node.parts.length - 1;
+          if (!superCascade && !last) this.emit(part, 'dup');
+          this.expression(part);
+          if (!last) this.emit(part, 'pop');
+        });
         break;
       }
       case 'block': {

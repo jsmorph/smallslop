@@ -46,8 +46,12 @@ unless described as method definitions.
 | Smallslop source | Class | JavaScript representation |
 | --- | --- | --- |
 | `42`, `-7`, `9007199254740993` | `Integer` | `BigInt` |
-| `42.0`, `-0.25`, `2e3` | `Float` | `Number` |
+| `16r1F`, `2r1010`, `-36rZ` | `Integer` | `BigInt`, written in radix 2 through 36 with digits and capital letters |
+| `42.0`, `-0.25`, `2e3`, `1.5d2`, `2.5q-1` | `Float` | `Number`.  The ANSI exponent letters `e`, `d`, and `q` select one representation. |
 | `'text'`, `'it''s a string'` | `String` | String |
+| `#name`, `#at:put:`, `#+`, `#'two words'` | `Symbol` | An interned object.  Two symbols with the same characters are the same object. |
+| `$a`, `$ ` | `Character` | An interned object for one code point |
+| `#(1 $a 'b' #c #(2) nil)` | `Array` | A frozen JavaScript array |
 | `true`, `false` | `True`, `False` | Boolean |
 | `nil` | `UndefinedObject` | `null` |
 | `[42]` | `Block` | A block with its captured environment |
@@ -129,6 +133,19 @@ after a return in the same statement sequence.  A method can send other
 messages through `self`.  A `super` send starts lookup at the superclass of
 the class that defined the current method, while keeping the receiver.
 
+A cascade sends several messages to one receiver, separated by semicolons
+(ANSI §3.4.5.3.3).  The receiver is the receiver of the last message before
+the first semicolon, and the cascade's value is the value of its last message.
+`Counter new increment; increment; count` sends all three messages to the new
+counter, and `3 + 4; * 10` evaluates to `30`.  When that receiver is `super`,
+every message in the cascade is a `super` send.
+
+A literal array contains literals, nested literal arrays, `nil`, `true`, and
+`false` (ANSI §3.4.6.6).  Write a symbol inside it as `#name`, because the
+compiler rejects other bare names, whose meaning ANSI leaves undefined.  The
+array is frozen, because ANSI leaves the effect of changing a literal
+undefined (§3.4.6).  `copy` returns a changeable array.
+
 ### Bindings and blocks
 
 `| first second |` declares locals at the start of a method, evaluated
@@ -193,7 +210,9 @@ frame and yields when its process exhausts the instruction budget.
 | Every object | `yourself`, `class`, `==`, `~~`, `=`, `~=`, `hash`, `identityHash`, `copy`, `isNil`, `notNil`, `isKindOf:`, `isMemberOf:`, `respondsTo:`, `perform:`, `perform:with:` through `perform:with:with:with:`, `perform:withArguments:`, `error:` |
 | Every class | `new`, `name`, `category`, `superclass`, `subclasses`, `allSubclasses`, `allSuperclasses`, `instVarNames`, `allInstVarNames`, `selectors`, `includesSelector:`, `canUnderstand:`, `inheritsFrom:` |
 | Integer and Float | `+`, `-`, `*`, `<`, `<=`, `>`, `>=`, `negated`, `asFloat`, `asString` |
-| Integer | `quo:`, `rem:` |
+| Integer | `quo:`, `rem:`, `asCharacter` |
+| String and Symbol | `asString`, `asSymbol`; `numArgs` on Symbol |
+| Character | `=`, `codePoint`, `value`, `asInteger`, `asCharacter`, `asString`, `asSymbol`, `asUppercase`, `asLowercase`, `isLetter`, `isDigit`, `isAlphaNumeric`, `isUppercase`, `isLowercase`, `isVowel`, `isSeparator` |
 | Float | `/`, `truncated` |
 | Boolean | `not`, `ifTrue:`, `ifFalse:`, `ifTrue:ifFalse:`, `ifFalse:ifTrue:`, `and:`, `or:` |
 | Block | `value`, `value:`, `value:value:`, `value:value:value:`, `value:value:value:value:`, `whileTrue:`, `whileFalse:` |
@@ -522,6 +541,8 @@ conversion.
 | Special Float | `{"kind":"float","value":"-0"}`, with `"NaN"`, `"Infinity"`, or `"-Infinity"` as the other special values |
 | Boolean | `{"kind":"boolean","value":true}` |
 | String | `{"kind":"string","value":"text"}` |
+| Symbol | `{"kind":"symbol","value":"at:put:"}` |
+| Character | `{"kind":"character","value":97}`, with the code point |
 | Object reference | `{"kind":"object","id":1,"className":"Counter"}`, with an ID allocated by the adapter |
 
 Process, frame, method, and breakpoint IDs belong to the runtime.  Object
@@ -770,6 +791,7 @@ returns `{op, name, args, next}`.
 | `jump` | Byte offset or assembler label | Continue at the destination |
 | `jumpFalse` | Byte offset or assembler label | Pop a Boolean and branch when false |
 | `global` | Literal index of a class name | Push the class registered under that name, or suspend with `UndefinedName` |
+| `dup` | None | Push the stack's top value again, for a cascade |
 
 Lexical depth zero denotes the current environment.  Binding indexes start at
 zero, with arguments followed by locals.  Greater depths select captured
@@ -984,7 +1006,7 @@ process completed and throws an error describing any other outcome.
 
 | Area | Pending work |
 | --- | --- |
-| Language and library | Cascades, symbols, literal arrays, collection methods, integer `/`, and fractions |
+| Language and library | Collection methods, integer `/`, and fractions |
 | Object model | Per-class metaclasses and instance-layout migration |
 | Debugger | Source-level stepping and invocation restart |
 | Host access | Constructors, module imports, host symbols, and callbacks requiring synchronous return values |

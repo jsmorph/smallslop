@@ -162,9 +162,9 @@ value: [0, 255]}`.
 Command results report the Smallslop process.  A completed command returns
 `value` or a `result` description, and a paused command returns the process
 state, which the debugger can inspect, repair, and resume.  `value` and result
-rows use plain JSON, except that integers, byte arrays, and non-finite floats
-use the tagged forms above.  `send` arguments and object handles use the
-[debugger encoding](manual.md#commands-and-values).
+rows use plain JSON, except that integers, byte arrays, symbols, characters,
+and non-finite floats use the tagged forms above.  `send` arguments and object
+handles use the [debugger encoding](manual.md#commands-and-values).
 
 ## Instructions and model selection
 

@@ -4,9 +4,10 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { readPackage } from '../server/source-files.mjs';
 
 const files = new Map();
-for (const directory of ['src', 'examples']) {
+for (const directory of ['src', 'ui', 'examples']) {
   const base = new URL(`../${directory}/`, import.meta.url);
   for (const name of await readdir(base)) {
     if (/\.(js|html)$/.test(name)) files.set(`/${directory}/${name}`, await readFile(new URL(name, base)));
@@ -17,6 +18,17 @@ const server = createServer((request, response) => {
   if (pathname === '/') {
     response.writeHead(302, { Location: '/examples/index.html' });
     response.end();
+    return;
+  }
+  const sources = /^\/api\/smalltalk\/([a-z][a-z0-9-]*)$/.exec(pathname);
+  if (sources) {
+    readPackage(sources[1]).then(packageFiles => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(packageFiles));
+    }, error => {
+      response.writeHead(error.code === 'ENOENT' ? 404 : 500, { 'Content-Type': 'text/plain' });
+      response.end(error.message);
+    });
     return;
   }
   const file = files.get(pathname);

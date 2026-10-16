@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Debugger, Runtime } from '../src/index.js';
 import { createRepairDemo } from '../examples/repair.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 const transport = debugger_ => request => JSON.parse(JSON.stringify(debugger_.dispatch(JSON.parse(JSON.stringify(request)))));
 
 test('an agent repairs the nested-block example through JSON commands', () => {
-  const { runtime, processId, klass } = createRepairDemo();
+  const { runtime, processId, klass } = createRepairDemo(kernel);
   const send = transport(new Debugger(runtime));
   let state = send({ op: 'run', processId });
   assert.equal(state.stop.reason, 'breakpoint');
@@ -25,7 +28,7 @@ test('an agent repairs the nested-block example through JSON commands', () => {
 });
 
 test('object handles preserve cycles and shared identity until release', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const debugger_ = new Debugger(runtime);
   const klass = runtime.defineClass('Link', { slots: ['next', 'other'] });
   const object = runtime.newObject(klass);
@@ -42,7 +45,7 @@ test('object handles preserve cycles and shared identity until release', () => {
 });
 
 test('JSON encoding preserves special floats and rejects malformed values', () => {
-  const debugger_ = new Debugger(new Runtime());
+  const debugger_ = new Debugger(new Runtime({ sources: kernel }));
   for (const value of [0, -0, 1.25, NaN, Infinity, -Infinity, 9007199254740993n, null, true, 'text']) {
     assert.ok(Object.is(debugger_.decode(JSON.parse(JSON.stringify(debugger_.value(value)))), value));
   }
@@ -52,7 +55,7 @@ test('JSON encoding preserves special floats and rejects malformed values', () =
 });
 
 test('an agent inspects source and places a breakpoint in a block', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const send = transport(new Debugger(runtime));
   const evaluation = send({ op: 'evaluate', source: '[42] value' });
   const methodId = evaluation.frames[0].methodId;
@@ -66,7 +69,7 @@ test('an agent inspects source and places a breakpoint in a block', () => {
 });
 
 test('scoped edits distinguish shadowed bindings in nested blocks', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const send = transport(new Debugger(runtime));
   let state = send({ op: 'evaluate', source: '| x | x := 1. [:x | [x] value] value: 2' });
   const processId = state.id;
@@ -84,7 +87,7 @@ test('scoped edits distinguish shadowed bindings in nested blocks', () => {
 });
 
 test('an agent repairs evaluated arguments without replaying expressions', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const send = transport(new Debugger(runtime));
   const { id: processId } = send({ op: 'evaluate', source: '| divisor | divisor := 0. 8 quo: divisor' });
   let state = send({ op: 'run', processId });
@@ -101,7 +104,7 @@ test('an agent repairs evaluated arguments without replaying expressions', () =>
 });
 
 test('browser metadata and guarded installation preserve method versions', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const send = transport(new Debugger(runtime));
   const klass = runtime.defineClass('BrowserExample', { category: 'Examples', slots: ['count'] });
   const first = send({ op: 'install', className: klass.name, source: 'answer ^41', protocol: 'accessing', expectedMethodId: null });
@@ -121,7 +124,7 @@ test('browser metadata and guarded installation preserve method versions', () =>
 });
 
 test('method browsing finds sends in blocks and distinguishes implementation forms', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const send = transport(new Debugger(runtime));
   const klass = runtime.defineClass('BrowserExample');
   runtime.installSource(klass, 'answer ^[super yourself] value', { protocol: 'testing' });

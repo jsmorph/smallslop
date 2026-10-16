@@ -1,4 +1,5 @@
 import { Block, Debugger, Host, HostOperation, ProcessRunner, Runtime } from '../src/index.js';
+import { fetchSources } from '../ui/sources.js';
 
 export const methods = [
   `initialize: element service: hostService
@@ -36,7 +37,8 @@ export const methods = [
   ^self increment: amount`,
 ];
 
-const runtime = new Runtime();
+const { kernel } = await fetchSources(['kernel']);
+const runtime = new Runtime({ sources: kernel });
 const agent = new Debugger(runtime);
 const view = new Debugger(runtime);
 const widgets = new Map();

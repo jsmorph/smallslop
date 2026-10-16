@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Runtime, SmallCharacter, SmallSymbol } from '../src/index.js';
+import { readPackageSync } from '../server/source-files.mjs';
 
-const runtime = new Runtime();
+const kernel = readPackageSync('kernel');
+
+const runtime = new Runtime({ sources: kernel });
 
 function run(source) {
   const state = runtime.run(runtime.evaluate(source), { budget: 10_000_000 });

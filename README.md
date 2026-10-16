@@ -16,8 +16,9 @@ together with the directories it imports.
 
 | Directory | Contents | Runs in | Imports |
 | --- | --- | --- | --- |
-| [`src/`](src/) | Interpreter, compiler, debugger, class library, host interface, inspectors | Browser, Node | none |
-| [`ui/`](ui/) | Pane workspace, System Browser, Debugger, object inspectors, component panes, session connection | Browser | `src/`, `components/` |
+| [`src/`](src/) | Interpreter, compiler, debugger, primitives, source loading, host interface, inspectors | Browser, Node | none |
+| [`smalltalk/`](smalltalk/) | Smallslop source, one interchange file per class: class library, exceptions, and tool classes | Read by the runtimes | none |
+| [`ui/`](ui/) | Pane workspace, System Browser, Debugger, object inspectors, component panes, session connection | Browser | `src/`, `components/`, and `smalltalk/` through its server |
 | [`components/`](components/) | Component runtime, manifests, value encoding, requests | Browser, Node | `src/` |
 | [`server/`](server/) | Server runtime and database, Web server, Pi agent, component service | Node | `src/`, `components/`, and `@earendil-works/pi-coding-agent` in `agent.mjs` and `model-runtime.mjs` |
 | [`examples/`](examples/) | Counter page, scripted repair, disk-usage components, agent workspace | Browser, Node | the directories above |

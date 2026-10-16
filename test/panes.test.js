@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PaneWorld } from '../ui/panes.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const sources = { kernel: readPackageSync('kernel'), tools: readPackageSync('tools'), workspace: readPackageSync('workspace') };
 
 function workspace() {
   const extent = { width: 1200, height: 800 };
   let created = 0;
-  const world = new PaneWorld({ extent: () => extent,
+  const world = new PaneWorld({ sources, extent: () => extent,
     createView: () => { created++; return { render() {}, focus() {}, dispose() {} }; } });
   world.register({ id: 'printing', title: 'Printing' });
   return { world, extent, created: () => created };

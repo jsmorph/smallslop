@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { Debugger, Host, ProcessRunner, Runtime, SmallCharacter, SmallSymbol } from '../src/index.js';
 import { decode, encode } from '../components/values.js';
 import { encode as sqlEncode, parameters } from '../server/values.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 function run(runtime, source) {
   const state = runtime.run(runtime.evaluate(source));
@@ -11,7 +14,7 @@ function run(runtime, source) {
 }
 
 test('class names resolve when code runs, so an undefined class can be repaired', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const processId = runtime.evaluate('Later new isKindOf: Later');
   const paused = runtime.run(processId);
   assert.equal(paused.stop.error.name, 'UndefinedName');
@@ -22,7 +25,7 @@ test('class names resolve when code runs, so an undefined class can be repaired'
 });
 
 test('the Object protocol covers identity, copying, hashing, testing, and perform', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const point = runtime.defineClass('Point', { slots: ['x', 'y'] });
   runtime.installSource(point, 'x: newX x := newX');
   runtime.installSource(point, 'x ^x');
@@ -42,7 +45,7 @@ test('the Object protocol covers identity, copying, hashing, testing, and perfor
 });
 
 test('perform reports a missing method at the perform send, and retry repeats it', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const klass = runtime.defineClass('Greeter');
   const processId = runtime.evaluate("Greeter new perform: 'greet'");
   const paused = runtime.run(processId);
@@ -57,7 +60,7 @@ test('perform reports a missing method at the perform send, and retry repeats it
 });
 
 test('classes describe their names, hierarchy, variables, and methods', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const shape = runtime.defineClass('Shape', { slots: ['origin'], category: 'Graphics' });
   const circle = runtime.defineClass('Circle', { superclass: shape, slots: ['radius'], category: 'Graphics' });
   runtime.installSource(circle, 'radius ^radius');
@@ -77,7 +80,7 @@ test('classes describe their names, hierarchy, variables, and methods', () => {
 });
 
 test('symbols and characters are interned literal objects', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const symbol = run(runtime, '#at:put:');
   assert.equal(symbol, SmallSymbol.of('at:put:'));
   assert.equal(run(runtime, '#foo == #foo'), true);
@@ -99,7 +102,7 @@ test('symbols and characters are interned literal objects', () => {
 });
 
 test('literal arrays are frozen and accept only literals, nil, true, and false', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const array = run(runtime, "#(1 -2 2.5 'text' #sym $c #(3) nil true false)");
   assert.deepEqual(array, [1n, -2n, 2.5, 'text', SmallSymbol.of('sym'), SmallCharacter.of(99), [3n], null, true, false]);
   assert.equal(Object.isFrozen(array), true);
@@ -109,7 +112,7 @@ test('literal arrays are frozen and accept only literals, nil, true, and false',
 });
 
 test('radix integers and ANSI exponent letters are numbers', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   assert.equal(run(runtime, '16r1F'), 31n);
   assert.equal(run(runtime, '-2r1010'), -10n);
   assert.equal(run(runtime, '36rZ'), 35n);
@@ -120,7 +123,7 @@ test('radix integers and ANSI exponent letters are numbers', () => {
 });
 
 test('cascades send each message to the receiver of the first message', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const counter = runtime.defineClass('Counter', { slots: ['count'] });
   runtime.installSource(counter, 'increment count isNil ifTrue: [count := 0]. count := count + 1');
   runtime.installSource(counter, 'count ^count');
@@ -138,7 +141,7 @@ test('cascades send each message to the receiver of the first message', () => {
 });
 
 test('symbols and characters cross the debugger, component, SQL, and host boundaries', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const debugger_ = new Debugger(runtime);
   assert.deepEqual(debugger_.value(SmallSymbol.of('foo')), { kind: 'symbol', value: 'foo' });
   assert.deepEqual(debugger_.value(SmallCharacter.of(97)), { kind: 'character', value: 97 });
@@ -157,7 +160,7 @@ test('symbols and characters cross the debugger, component, SQL, and host bounda
 });
 
 test('each class has a metaclass that holds its class-side methods and variables', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const point = runtime.defineClass('Point', { slots: ['x', 'y'], classSlots: ['created'] });
   runtime.installSource(point, 'setX: newX y: newY x := newX. y := newY');
   runtime.installSource(point, 'x ^x');

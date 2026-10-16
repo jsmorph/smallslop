@@ -1,33 +1,5 @@
 import { Debugger, Host, ProcessRunner, Runtime } from '../src/index.js';
-
-const methods = [
-  `open visible := true. self render. self focus`,
-  `close visible := false. self render`,
-  `focus ^view call: 'focus'`,
-  `render ^view call: 'render'`,
-  `bounds: left top: top width: horizontal height: vertical
-    | rectangle |
-    rectangle := view call: 'bounds' with: left with: top with: horizontal with: vertical.
-    x := rectangle get: 'x'. y := rectangle get: 'y'.
-    width := rectangle get: 'width'. height := rectangle get: 'height'.
-    self render`,
-  `moveTo: left y: top
-    self bounds: left top: top width: width height: height.
-    enlarged := false. self render`,
-  `resizeTo: horizontal height: vertical
-    self bounds: x top: y width: horizontal height: vertical.
-    enlarged := false. self render`,
-  `enlarge
-    enlarged ifTrue: [
-      enlarged := false.
-      self bounds: (savedBounds get: 'x') top: (savedBounds get: 'y')
-        width: (savedBounds get: 'width') height: (savedBounds get: 'height')
-    ] ifFalse: [
-      savedBounds := view call: 'rectangle'. enlarged := true.
-      self fit
-    ]. self focus`,
-  `fit self bounds: 0.0 top: 0.0 width: (view call: 'width') height: (view call: 'height')`,
-];
+import { loadSources } from '../src/sources.js';
 
 export function paneBounds(rectangle, extent) {
   for (const key of ['x', 'y', 'width', 'height']) {
@@ -40,8 +12,9 @@ export function paneBounds(rectangle, extent) {
 }
 
 export class PaneWorld {
-  constructor({ extent, createView, changed = () => {}, failed = () => {} }) {
-    this.runtime = new Runtime();
+  constructor({ sources, extent, createView, changed = () => {}, failed = () => {} }) {
+    this.runtime = new Runtime({ sources: sources.kernel });
+    this.loadFailures = loadSources(this.runtime, [...sources.tools, ...sources.workspace]).failures;
     this.debugger = new Debugger(this.runtime);
     this.runner = new ProcessRunner(this.runtime, { onChange: id => {
       const process = this.runtime.processes.get(id);
@@ -55,9 +28,8 @@ export class PaneWorld {
     this.createView = createView;
     this.changed = changed;
     this.focused = null;
-    this.klass = this.runtime.defineClass('Pane', { category: 'Workspace',
-      slots: ['id', 'title', 'owner', 'x', 'y', 'width', 'height', 'visible', 'enlarged', 'savedBounds', 'view'] });
-    for (const source of methods) this.runtime.installSource(this.klass, source, { protocol: 'window controls' });
+    this.klass = this.runtime.classes.get('Pane');
+    if (!this.klass) throw new Error('The workspace sources define no Pane class.');
   }
 
   register(definition) {

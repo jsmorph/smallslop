@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { Debugger, Runtime, SmallObject, fileIn, fileOut, interchangeChunks, parseInterchange, parseInterchangeElements } from '../src/index.js';
-import { loadSourceDirectory, writeClassFile } from '../server/source-files.mjs';
 import { PaneWorld } from '../ui/panes.js';
-import { BrowserService, installSystemBrowser } from '../ui/system-browser.js';
+import { BrowserService } from '../ui/system-browser.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
+const sources = { kernel, tools: readPackageSync('tools'), workspace: readPackageSync('workspace') };
 
 function run(runtime, source) {
   const state = runtime.run(runtime.evaluate(source), { budget: 1_000_000 });
@@ -67,7 +67,7 @@ test('interchange chunks end at ! and keep doubled ! as text', () => {
 });
 
 test('file in defines classes and methods, and file out reproduces the text', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const result = fileIn(runtime, point);
   assert.deepEqual(result, { classes: ['Point3'], methods: ['Point3>>x', 'Point3>>x:y:', 'Point3>>greeting', 'Point3 class>>x:y:', 'Point3 class>>made'], failures: [] });
   const klass = runtime.classes.get('Point3');
@@ -81,14 +81,14 @@ test('file in defines classes and methods, and file out reproduces the text', ()
   const text = fileOut(klass);
   assert.match(text, /^Smalltalk interchangeVersion: '1.0'!\nClass named: 'Point3'/);
   assert.match(text, /\^'Hi!! It''s ', x printString!/);
-  const copy = new Runtime();
+  const copy = new Runtime({ sources: kernel });
   assert.deepEqual(fileIn(copy, text).failures, []);
   assert.equal(fileOut(copy.classes.get('Point3')), text);
   assert.equal(run(copy, '(Point3 x: 1 y: 2) greeting'), "Hi! It's 1");
 });
 
 test('file in rejects class variables, pools, and indexed instance variables and reports method failures', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const classVariables = definition('B').replace("classVariableNames: ''", "classVariableNames: 'Count'");
   const indexed = definition('C').replace('#none', '#object');
   const result = fileIn(runtime, `Smalltalk interchangeVersion: '1.0'!\n${classVariables}${indexed}${definition('D')}D method!\nbroken ^(!\nE method!\nfoo ^1!\n`);
@@ -103,7 +103,7 @@ test('file in rejects class variables, pools, and indexed instance variables and
 });
 
 test('redefinition keeps instances, reads new slots as nil, and recompiles dependent methods', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   fileIn(runtime, point);
   fileIn(runtime, `Smalltalk interchangeVersion: '1.0'!\n${definition('Point4', { superclass: 'Point3', slots: 'z' })}Point4 method!\nsum ^x + y + (z isNil ifTrue: [0] ifFalse: [z])!\n`);
   const klass = runtime.classes.get('Point3');
@@ -143,7 +143,7 @@ test('redefinition keeps instances, reads new slots as nil, and recompiles depen
 });
 
 test('redefinition refuses kernel classes, cycles, and conflicting slots without partial changes', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   fileIn(runtime, `Smalltalk interchangeVersion: '1.0'!\n${definition('A', { slots: 'a' })}${definition('B', { superclass: 'A', slots: 'b' })}`);
   const a = runtime.classes.get('A');
   const b = runtime.classes.get('B');
@@ -159,42 +159,10 @@ test('redefinition refuses kernel classes, cycles, and conflicting slots without
   assert.deepEqual([b.slots, b.metaclass.superclass], [['b'], runtime.objectClass.metaclass]);
 });
 
-test('a source directory loads superclasses first and writes one file per class', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'smallslop-sources-'));
-  try {
-    const header = "Smalltalk interchangeVersion: '1.0'!\n";
-    await writeFile(join(directory, 'Animal.st'), `${header}${definition('Animal', { superclass: 'Being', slots: 'name' })}Animal method!\nname ^name!\n`);
-    await writeFile(join(directory, 'Being.st'), `${header}${definition('Being')}Being method!\nalive ^true!\n`);
-    await writeFile(join(directory, 'Extensions.st'), `${header}Integer method!\ndoubled ^self * 2!\n`);
-    await writeFile(join(directory, 'notes.txt'), 'ignored');
-    const runtime = new Runtime();
-    const result = await loadSourceDirectory(runtime, directory);
-    assert.deepEqual(result.classes, ['Being', 'Animal']);
-    assert.deepEqual(result.failures, []);
-    assert.equal(run(runtime, 'Animal new alive'), true);
-    assert.equal(run(runtime, '21 doubled'), 42n);
-
-    const path = await writeClassFile(runtime.classes.get('Animal'), directory);
-    assert.equal(path, join(directory, 'Animal.st'));
-    assert.equal(await readFile(path, 'utf8'), fileOut(runtime.classes.get('Animal')));
-
-    await writeFile(join(directory, 'Copy.st'), `${header}${definition('Being')}`);
-    await assert.rejects(loadSourceDirectory(new Runtime(), directory), /Copy.st: Being is also defined in Being.st/);
-    await writeFile(join(directory, 'Copy.st'), `${header}Being method!\nbroken ^(!\n`);
-    const failed = await loadSourceDirectory(new Runtime(), directory);
-    assert.deepEqual(failed.failures.map(failure => failure.file), ['Copy.st']);
-    await writeFile(join(directory, 'Copy.st'), 'Being method!\nfoo ^1!\n');
-    await assert.rejects(loadSourceDirectory(new Runtime(), directory), /^Error: Copy.st: An interchange file starts with/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test('the System Browser edits class definitions and files classes in and out', () => {
-  const world = new PaneWorld({ extent: () => ({ width: 1200, height: 800 }), createView: () => ({ render() {}, focus() {}, dispose() {} }) });
+  const world = new PaneWorld({ sources, extent: () => ({ width: 1200, height: 800 }), createView: () => ({ render() {}, focus() {}, dispose() {} }) });
   try {
     const adapter = { runtime: world.runtime, host: world.host, inspector: world.debugger };
-    installSystemBrowser(adapter, world.klass);
     const pane = world.register({ id: 'system-browser', title: 'System Browser', className: 'SystemBrowser' });
     const browser = new BrowserService(adapter, pane, { category: 'Workspace', className: 'Pane' });
     pane.browser = browser;

@@ -2,7 +2,7 @@ import { PaneWorld } from './panes.js';
 import { createPaneView, element } from './pane-view.js';
 import { createPaneSelector } from './pane-selector.js';
 
-export function createWorkspace({ container, toolbar, definitions, storage, storageKey, onChange = () => {} }) {
+export function createWorkspace({ container, toolbar, definitions, sources, storage, storageKey, onChange = () => {} }) {
   const events = new AbortController();
   const on = (node, type, handler) => node.addEventListener(type, handler, { signal: events.signal });
   const paneButton = element('button', 'Panes');
@@ -47,6 +47,7 @@ export function createWorkspace({ container, toolbar, definitions, storage, stor
   const dispatch = request => world.dispatch(request);
   const act = request => { try { return dispatch(request); } catch (error) { report(error); } };
   const world = new PaneWorld({
+    sources,
     extent: () => ({ width: container.clientWidth, height: container.clientHeight }), changed, failed: report,
     createView: pane => createPaneView(pane, { container: pane.container ?? container, dispatch, report,
       nextOrder: () => ++order, focusFallback: () => paneButton.focus() }),
@@ -71,6 +72,7 @@ export function createWorkspace({ container, toolbar, definitions, storage, stor
       refresh();
       return { refresh, state: () => activity };
     } });
+  for (const failure of world.loadFailures) report(new Error(`${failure.file}: ${failure.className}: ${failure.message}`));
   const defaults = world.layout();
   for (const pane of defaults.panes) pane.visible = pane.id === 'panes' || definitions.some(definition => definition.id === pane.id && definition.open);
   const reset = () => {

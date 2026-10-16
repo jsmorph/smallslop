@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 import { Debugger, Host, ProcessRunner, Runtime } from '../src/index.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 async function collect() {
   await setImmediate();
@@ -18,7 +21,7 @@ async function expectCollected(reference) {
 }
 
 function waitingRuntime(operation) {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const completion = Promise.withResolvers();
   const runner = new ProcessRunner(runtime, { onChange(id) {
     const process = runtime.process(id);
@@ -51,7 +54,7 @@ test('pending host work retains its runtime until completion or cancellation', a
 });
 
 test('disposed calls release entry methods while escaped blocks remain usable', async () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const baseline = runtime.methods.size;
   for (let i = 0; i < 1000; i++) {
     const id = runtime.start(null, 'yourself');
@@ -77,7 +80,7 @@ test('disposed calls release entry methods while escaped blocks remain usable', 
 });
 
 test('active frames, breakpoints, and debugger history retain old versions', async () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const debugger_ = new Debugger(runtime);
   const klass = runtime.defineClass('Versions');
   const object = runtime.newObject(klass);

@@ -6,6 +6,7 @@ import { acceptWebSocket } from './ws.mjs';
 import { ServerWorld } from './world.mjs';
 import { ComponentService } from './component-service.mjs';
 import { errorData } from '../components/values.js';
+import { readPackage, sourceRoot as defaultSourceRoot } from './source-files.mjs';
 
 const loopback = address => address === '::1' || /^(::ffff:)?127\./.test(address);
 const remoteError = data => Object.assign(new Error(typeof data?.message === 'string' ? data.message : 'The peer reported an invalid error.'),
@@ -16,8 +17,8 @@ const types = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
 };
 
-export function createSmallslopServer({ root, directories, index, databasePath = ':memory:', createAgent, components: componentOptions }) {
-  const components = componentOptions ? new ComponentService(componentOptions) : null;
+export function createSmallslopServer({ root, directories, index, databasePath = ':memory:', sourceRoot = defaultSourceRoot, createAgent, components: componentOptions }) {
+  const components = componentOptions ? new ComponentService({ ...componentOptions, sourceRoot }) : null;
   const allowed = directories.map(directory => resolve(root, directory) + sep);
   const clients = new Set();
   const validHost = request => {
@@ -30,8 +31,15 @@ export function createSmallslopServer({ root, directories, index, databasePath =
   const server = createServer(async (request, response) => {
     try {
       if (!validHost(request)) { response.writeHead(403); response.end('Local host required'); return; }
-      if (request.method !== 'GET') { response.writeHead(405); response.end('GET required'); return; }
       const { pathname } = new URL(request.url, 'http://localhost');
+      const sources = /^\/api\/smalltalk\/([^/]+)$/.exec(pathname);
+      if (request.method !== 'GET') { response.writeHead(405); response.end('GET required'); return; }
+      if (sources) {
+        const files = await readPackage(sources[1], sourceRoot);
+        response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        response.end(JSON.stringify(files));
+        return;
+      }
       if (pathname === '/') { response.writeHead(302, { Location: index }); response.end(); return; }
       const decoded = decodeURIComponent(pathname);
       if (decoded.includes('\0')) { response.writeHead(400); response.end('Invalid path'); return; }
@@ -51,7 +59,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       response.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
       response.end(data);
     } catch (error) {
-      const status = error instanceof URIError ? 400 : ['ENOENT', 'EISDIR'].includes(error.code) ? 404 : 500;
+      const status = error.status ?? (error instanceof URIError ? 400 : ['ENOENT', 'EISDIR', 'ENOTDIR'].includes(error.code) ? 404 : 500);
       response.writeHead(status, { 'Content-Type': 'text/plain' });
       response.end(status === 404 ? 'Not found' : error.message);
     }
@@ -69,7 +77,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     }
     const connection = acceptWebSocket(request, socket);
     if (!connection) return;
-    const world = new ServerWorld(databasePath);
+    const world = new ServerWorld(databasePath, { sourceRoot });
     const state = { id: randomUUID(), status: 'Ready', model: '', messages: [] };
     const pending = new Map();
     let runner = null;

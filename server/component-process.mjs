@@ -3,16 +3,17 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CdpConnection, JavaScriptDebugger } from './debug-connection.mjs';
 import { errorData } from '../components/values.js';
+import { sourceRoot as defaultSourceRoot } from './source-files.mjs';
 
 export class ComponentProcess {
-  constructor({ directory, namespace, remote, changed = () => {}, failed = () => {} }) {
+  constructor({ directory, namespace, sourceRoot = defaultSourceRoot, remote, changed = () => {}, failed = () => {} }) {
     this.identity = { namespace, runtime: 'server', incarnation: crypto.randomUUID() };
     const versions = `${pathToFileURL(path.join(directory, 'versions')).href}/`;
     this.pending = new Map();
     this.nextId = 1;
     this.error = null;
     this.debugger = null;
-    this.child = fork(new URL('./component-child.mjs', import.meta.url), [directory, namespace, this.identity.incarnation], {
+    this.child = fork(new URL('./component-child.mjs', import.meta.url), [directory, namespace, this.identity.incarnation, sourceRoot], {
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'], execArgv: [],
     });
     const ready = Promise.withResolvers();

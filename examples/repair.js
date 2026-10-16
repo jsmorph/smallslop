@@ -1,7 +1,7 @@
 import { Code, Debugger, Runtime } from '../src/index.js';
 
-export function createRepairDemo() {
-  const runtime = new Runtime();
+export function createRepairDemo(sources) {
+  const runtime = new Runtime({ sources });
   const klass = runtime.defineClass('RepairExample', { slots: ['visited'] });
   runtime.installSource(klass, 'invoke: block ^block value value');
   const method = runtime.installSource(klass, `run
@@ -17,8 +17,8 @@ export function createRepairDemo() {
   return { runtime, klass, receiver, processId };
 }
 
-export function runRepairDemo() {
-  const { runtime, klass, receiver, processId } = createRepairDemo();
+export function runRepairDemo(sources) {
+  const { runtime, klass, receiver, processId } = createRepairDemo(sources);
   const states = [];
   let state = runtime.run(processId);
   if (state.stop.reason !== 'breakpoint') throw new Error('Expected the nested-block breakpoint.');
@@ -41,8 +41,8 @@ export function runRepairDemo() {
   return { states, result: state.result };
 }
 
-export function runAgentRepairDemo() {
-  const { runtime, klass, processId } = createRepairDemo();
+export function runAgentRepairDemo(sources) {
+  const { runtime, klass, processId } = createRepairDemo(sources);
   const debugger_ = new Debugger(runtime);
   const send = request => JSON.parse(JSON.stringify(debugger_.dispatch(JSON.parse(JSON.stringify(request)))));
   const paused = send({ op: 'run', processId });

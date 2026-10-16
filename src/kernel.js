@@ -1,8 +1,8 @@
 import { Code, assemble } from './bytecode.js';
 import { SendCall, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './objects.js';
 import { installPrimitives } from './primitives.js';
-import { libraryClasses, librarySource } from './library.js';
-import { exceptionClasses, exceptionSource, installExceptionPrimitives } from './exceptions.js';
+import { installExceptionPrimitives } from './exceptions.js';
+import { loadSources, requireLoaded } from './sources.js';
 
 function selectorName(value) {
   if (value instanceof SmallSymbol && value.name) return value.name;
@@ -118,7 +118,8 @@ function installObjectProtocol(runtime) {
   }, 'testing class hierarchy');
 }
 
-export function installKernel(runtime) {
+export function installKernel(runtime, sources) {
+  if (!Array.isArray(sources)) throw new Error('A runtime requires the kernel sources.');
   const primitives = {
     '+': (a, b) => a + b,
     '-': (a, b) => a - b,
@@ -145,45 +146,12 @@ export function installKernel(runtime) {
       }, { protocol: 'converting' });
     } else runtime.primitive(klass, 'asString', 0, receiver => String(receiver), { protocol: 'converting' });
   }
-  const methods = {
-    Object: ['= other ^self == other', '~= other ^(self = other) not', '~~ other ^(self == other) not',
-      'hash ^self identityHash', 'isNil ^false', 'notNil ^true'],
-    UndefinedObject: ['isNil ^true', 'notNil ^false'],
-    True: [
-      'not ^false', 'ifTrue: block ^block value', 'ifFalse: block ^nil',
-      'ifTrue: yes ifFalse: no ^yes value', 'ifFalse: no ifTrue: yes ^yes value',
-      'and: block ^block value', 'or: block ^true',
-    ],
-    False: [
-      'not ^true', 'ifTrue: block ^nil', 'ifFalse: block ^block value',
-      'ifTrue: yes ifFalse: no ^no value', 'ifFalse: no ifTrue: yes ^no value',
-      'and: block ^false', 'or: block ^block value',
-    ],
-    Block: ['whileFalse: body ^[self value not] whileTrue: body'],
-  };
-  for (const [name, sources] of Object.entries(methods)) {
-    for (const source of sources) runtime.installSource(runtime.classes.get(name), source, {
-      protocol: ['Object', 'UndefinedObject'].includes(name) ? (source.startsWith('hash') ? 'comparing' : 'testing') : 'control',
-    });
-  }
   installObjectProtocol(runtime);
   installTextProtocol(runtime);
-  for (const [name, superclass, slots, category] of libraryClasses) {
-    runtime.defineClass(name, { superclass: runtime.classes.get(superclass), slots, category });
-  }
-  for (const [name, superclass, slots] of exceptionClasses) {
-    runtime.defineClass(name, { superclass: runtime.classes.get(superclass), slots, category: 'Kernel-Exceptions' });
-  }
-  installPrimitives(runtime);
-  installExceptionPrimitives(runtime);
-  for (const source of [librarySource, exceptionSource]) {
-    for (const [className, protocols] of Object.entries(source)) {
-      const klass = runtime.classNamed(className);
-      for (const [protocol, sources] of Object.entries(protocols)) {
-        for (const text of sources) runtime.installSource(klass, text, { protocol });
-      }
-    }
-  }
+  requireLoaded(loadSources(runtime, sources, { beforeMethods() {
+    installPrimitives(runtime);
+    installExceptionPrimitives(runtime);
+  } }), 'kernel');
   runtime.install(runtime.classes.get('Block'), 'whileTrue:', new Code({
     args: ['body'], literals: ['value', null], source: 'whileTrue: body',
     bytes: assemble([

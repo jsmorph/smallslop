@@ -228,3 +228,31 @@ Cancellation now runs termination blocks within a budget.  Host scope
 disposal reports a process whose termination blocks did not finish, then
 discards it with `cancel(id, {unwind: false})`.
 
+
+## 2026-10-16: Smallslop source in files
+
+The first persistence plan saved page classes to a server directory and had
+to separate shipped source, held in JavaScript strings, from changed source.
+That separation required a baseline, differences, and rules for base classes.
+The user approved moving all Smallslop source into interchange files, one per
+class, so every class has one source file and git holds the history.
+
+| Package | Classes | Loaded by |
+| --- | --- | --- |
+| `kernel` | Object protocol, class library, exceptions | Every runtime |
+| `tools` | `Inspector` | Page workspaces, server worlds, server component runtimes |
+| `workspace` | `Pane`, `SystemBrowser` | Page workspaces |
+| `server` | `Database`, `ResultSet` | Server worlds |
+
+`new Runtime({sources})` takes the kernel files, because the page must fetch
+them before it builds a runtime.  The files were generated with `fileOut` from
+the previous JavaScript sources.  A snapshot of every class definition and
+method (selector, protocol, form, arity, and source) in the kernel, page, and
+server runtimes matched before and after the change.  `fileOut` no longer
+lists methods without source in a comment, because that list depends on the
+primitives a runtime has installed.  The example programs and component
+classes keep building classes through the JavaScript API.
+
+- [x] Generate the files and load every runtime from them.
+- [ ] Write a class's file after each change in the page runtime, with a
+  version check against concurrent writers.

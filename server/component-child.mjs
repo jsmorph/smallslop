@@ -2,13 +2,14 @@ import inspector from 'node:inspector';
 import { ComponentRuntime } from '../components/runtime.js';
 import { ComponentStore } from './component-store.mjs';
 import { errorData } from '../components/values.js';
+import { readPackageSync } from './source-files.mjs';
 
-const [directory, namespace, incarnation] = process.argv.slice(2);
+const [directory, namespace, incarnation, sourceRoot] = process.argv.slice(2);
 const store = new ComponentStore(directory, namespace);
 const pending = new Map();
 let nextId = 1;
 const send = message => new Promise((resolve, reject) => process.send(message, error => error ? reject(error) : resolve()));
-const runtime = new ComponentRuntime({ namespace, name: 'server', incarnation,
+const runtime = new ComponentRuntime({ namespace, name: 'server', incarnation, sources: { kernel: readPackageSync('kernel', sourceRoot), tools: readPackageSync('tools', sourceRoot) },
   source: async version => { const source = await store.source(version); return { ...source, loadUrl: source.fileUrl }; },
   remote: request => new Promise((resolve, reject) => {
     const id = nextId++;

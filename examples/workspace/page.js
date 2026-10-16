@@ -4,6 +4,7 @@ import { element } from '../../ui/pane-view.js';
 import { createWorkspaceComponents } from '../../ui/components.js';
 import { SessionConnection } from '../../ui/session-connection.js';
 import { encode } from '../../components/values.js';
+import { fetchSources } from '../../ui/sources.js';
 
 const commands = [
   { op: 'state', description: 'Read the panes, their contents, and these commands.' },
@@ -42,7 +43,9 @@ const connection = new SessionConnection({ command, session: receive, open: () =
     receive({ ...session, status: 'Disconnected' });
   }
 } });
+const sources = await fetchSources(['kernel', 'tools', 'workspace']);
 const workspace = createWorkspace({
+  sources,
   container: document.querySelector('#workspace'),
   toolbar: document.querySelector('#toolbar'),
   definitions: [agentPane()],

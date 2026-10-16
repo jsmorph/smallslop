@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Runtime } from '../src/index.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 function evaluate(runtime, source) {
   const state = runtime.run(runtime.evaluate(source));
@@ -10,7 +13,7 @@ function evaluate(runtime, source) {
 }
 
 test('integer arithmetic remains exact and float conversion is explicit', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   assert.equal(evaluate(runtime, '9007199254740993 + 2'), 9007199254740995n);
   assert.equal(evaluate(runtime, '9007199254740993 * 9007199254740993'), 81129638414606699710187514626049n);
   assert.equal(evaluate(runtime, '7 quo: 3'), 2n);
@@ -24,7 +27,7 @@ test('integer arithmetic remains exact and float conversion is explicit', () => 
 });
 
 test('Boolean methods evaluate the selected block and preserve nonlocal returns', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   assert.equal(evaluate(runtime, 'true ifTrue: [42] ifFalse: [self missing]'), 42n);
   assert.equal(evaluate(runtime, 'false ifTrue: [self missing] ifFalse: [23]'), 23n);
   assert.equal(evaluate(runtime, 'false and: [self missing]'), false);
@@ -36,7 +39,7 @@ test('Boolean methods evaluate the selected block and preserve nonlocal returns'
 });
 
 test('a resumable loop computes an exact factorial without growing frames', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const id = runtime.evaluate('| i result | i := 1. result := 1. [i <= 30] whileTrue: [result := result * i. i := i + 1]. result');
   let state = runtime.run(id, { budget: 15 });
   let maxFrames = 0;
@@ -52,7 +55,7 @@ test('a resumable loop computes an exact factorial without growing frames', () =
 });
 
 test('a failing loop condition retains its value for debugger inspection', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const state = runtime.run(runtime.evaluate('[1] whileTrue: [nil]'));
   assert.equal(state.stop.reason, 'error');
   assert.match(state.stop.error.message, /requires a Boolean/);

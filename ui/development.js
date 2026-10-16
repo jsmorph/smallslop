@@ -1,5 +1,5 @@
 import { Inspectors } from '../src/index.js';
-import { BrowserService, installSystemBrowser } from './system-browser.js';
+import { BrowserService } from './system-browser.js';
 import { InspectorService } from './object-inspector.js';
 import { systemBrowserView } from './system-browser-view.js';
 import { objectInspectorView } from './object-inspector-view.js';
@@ -28,7 +28,6 @@ export function createWorkspaceDevelopment(workspace, { server } = {}) {
   };
   const adapter = { runtime: world.runtime, host: world.host, inspector: world.debugger, inspectors, touch: refresh, server,
     dispatch: request => request.op === 'methods' ? world.debugger.methods({}).filter(method => method.format === 'source') : execute(request) };
-  installSystemBrowser(adapter, world.klass, { retainOnClose: true });
   const perform = action => Promise.resolve().then(action).then(refresh).catch(report);
   const options = { world: adapter, element, perform, command: request => execute(request) };
 

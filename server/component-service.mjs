@@ -9,10 +9,11 @@ import { referenceKey, validateReference } from '../components/values.js';
 const queries = new Set(['runtimes.describe', 'modules.list', 'modules.source', 'snapshots.read', 'snapshots.list', 'jobs.list', 'jobs.inspect', 'debug.javascript']);
 
 export class ComponentService {
-  constructor({ directory, namespace, maxActive = 256, maxCompleted = 1024 }) {
+  constructor({ directory, namespace, sourceRoot, maxActive = 256, maxCompleted = 1024 }) {
     if (typeof namespace !== 'string' || !/^[a-z][a-z0-9-]*$/.test(namespace)) throw new Error('A component namespace requires lowercase letters, digits, and hyphens.');
     this.store = new ComponentStore(path.resolve(directory), namespace);
     this.namespace = namespace;
+    this.sourceRoot = sourceRoot;
     this.requests = new ComponentRequests({ maxActive, maxCompleted });
     this.browsers = new Map();
     this.instances = new Map();
@@ -22,7 +23,7 @@ export class ComponentService {
   }
 
   server() {
-    if (!this.process) this.process = new ComponentProcess({ directory: this.store.directory, namespace: this.namespace,
+    if (!this.process) this.process = new ComponentProcess({ directory: this.store.directory, namespace: this.namespace, sourceRoot: this.sourceRoot,
       remote: request => this.invoke(request), changed: event => {
         if (event.type === 'instance') this.remember(event);
         if (event.type === 'call') {

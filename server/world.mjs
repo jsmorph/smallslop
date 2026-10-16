@@ -2,44 +2,13 @@ import { Debugger, Host, ProcessRunner, Runtime, SmallObject } from '../src/inde
 import { SqliteConnection } from './sqlite.mjs';
 import { encode, parameters } from './values.js';
 import { Inspectors } from '../src/inspector.js';
-
-export const sources = {
-  Database: [
-    `schema ^service call: 'schema'`,
-    `close ^service call: 'close'`,
-    `execute: sql ^self execute: sql parameters: (service call: 'emptyParameters')`,
-    `execute: sql parameters: bindings
-      | data result |
-      data := service call: 'execute' with: sql with: bindings.
-      result := ResultSet new.
-      ^result initialize: data`,
-  ],
-  ResultSet: [
-    `initialize: data
-      columns := data get: 'columns'. rows := data get: 'rows'.
-      rowsAffected := data get: 'rowsAffected'.
-      rowCount := (rows get: 'length') truncated. position := 0. closed := false`,
-    `columns ^columns`, `rowCount ^rowCount`, `rowsAffected ^rowsAffected`,
-    `atEnd ^position >= rowCount`,
-    `next: count
-      | end page |
-      closed ifTrue: [^self fail: 'The result is closed.'].
-      self checkCount: count.
-      end := position + count.
-      end > rowCount ifTrue: [end := rowCount].
-      page := rows call: 'slice' with: position asFloat with: end asFloat.
-      position := end. ^page`,
-    `pageFrom: offset count: count
-      closed ifTrue: [^self fail: 'The result is closed.'].
-      self checkOffset: offset.
-      position := offset. ^self next: count`,
-    `close rows := nil. closed := true`,
-  ],
-};
+import { loadSources, requireLoaded } from '../src/sources.js';
+import { readPackageSync } from './source-files.mjs';
 
 export class ServerWorld {
-  constructor(path) {
-    this.runtime = new Runtime();
+  constructor(path, { sourceRoot } = {}) {
+    this.runtime = new Runtime({ sources: readPackageSync('kernel', sourceRoot) });
+    requireLoaded(loadSources(this.runtime, [...readPackageSync('tools', sourceRoot), ...readPackageSync('server', sourceRoot)]), 'server');
     this.debugger = new Debugger(this.runtime);
     this.waiting = new Map();
     this.inFlight = new Set();
@@ -50,12 +19,6 @@ export class ServerWorld {
     this.host = new Host(this.runtime, this.runner);
     this.inspectors = new Inspectors(this.host, this.debugger);
     this.scope = this.host.scope();
-    const slots = { Database: ['service'], ResultSet: ['columns', 'rows', 'position', 'rowCount', 'rowsAffected', 'closed'] };
-    for (const [name, names] of Object.entries(slots)) this.runtime.defineClass(name, { category: 'Server-Data', slots: names });
-    for (const [name, methods] of Object.entries(sources)) {
-      const klass = this.runtime.classes.get(name);
-      for (const source of methods) this.runtime.installSource(klass, source, { protocol: name === 'ResultSet' ? 'results' : 'operations' });
-    }
     const resultClass = this.runtime.classes.get('ResultSet');
     this.runtime.primitive(resultClass, 'fail:', 1, (_receiver, [message]) => { throw new Error(message); });
     this.runtime.primitive(resultClass, 'checkCount:', 1, (_receiver, [count]) => {

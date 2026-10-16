@@ -95,10 +95,13 @@ export function defineClassElement(runtime, element) {
   const existing = runtime.classes.get(element.name);
   const options = { superclass, slots: element.slots, classSlots: element.classSlots, category: element.annotations.category ?? existing?.category ?? 'Unclassified' };
   if (!existing) return { klass: runtime.defineClass(element.name, options), failures: [] };
+  const own = behavior => behavior.slots.slice(behavior.superclass.slots.length).join(' ');
+  if (existing.superclass === superclass && own(existing) === options.slots.join(' ')
+      && own(existing.metaclass) === options.classSlots.join(' ') && existing.category === options.category) return { klass: existing, failures: [] };
   return { klass: existing, failures: runtime.redefineClass(existing, options) };
 }
 
-export function installInterchangeElements(runtime, elements) {
+export function installInterchangeElements(runtime, elements, { beforeMethods } = {}) {
   const result = { classes: [], methods: [], failures: [] };
   const failed = (element, fields) => result.failures.push({ ...fields, ...(element.file ? { file: element.file } : {}) });
   for (const element of elements.filter(item => item.type === 'class')) {
@@ -110,6 +113,7 @@ export function installInterchangeElements(runtime, elements) {
       failed(element, { className: element.name, message: error.message });
     }
   }
+  beforeMethods?.(runtime);
   for (const element of elements.filter(item => item.type !== 'class')) {
     const klass = runtime.classes.get(element.className);
     const owner = element.type === 'classMethod' ? klass?.metaclass : klass;
@@ -149,15 +153,13 @@ export function classDefinition(klass) {
 }
 
 export function fileOut(klass) {
-  const parts = [`${version}!\n`, classDefinition(klass)];
-  const skipped = [];
+  const parts = [`${version}!\n`, klass.superclass ? classDefinition(klass) : ''];
   for (const [owner, kind] of [[klass, 'method'], [klass.metaclass, 'classMethod']]) {
     for (const method of [...owner.methods.values()].sort((a, b) => a.selector.localeCompare(b.selector))) {
-      if (method.format !== 'source') { skipped.push(`${owner.name}>>${method.selector}`); continue; }
+      if (method.format !== 'source') continue;
       parts.push(`\n${klass.name} ${kind}!\n${method.code.source.replaceAll('!', '!!')}!\nAnnotation key: 'category' value: ${quote(method.protocol)}!\n`);
     }
   }
-  if (skipped.length) parts.push(`\n"Methods without Smallslop source: ${skipped.join(', ').replaceAll('"', "'")}"!\n`);
   return parts.join('');
 }
 

@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Debugger, Host, HostOperation, ProcessRunner, Runtime } from '../src/index.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 function setup() {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const log = runtime.defineClass('Log', { classSlots: ['entries'] });
   runtime.installSource(log.metaclass, 'reset entries := OrderedCollection new');
   runtime.installSource(log.metaclass, 'add: anObject entries add: anObject. ^anObject');
@@ -198,7 +201,7 @@ test('stop on signal pauses at each signal, including handled ones', () => {
 });
 
 test('a host rejection signals an Error that a handler can catch', async () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const runner = new ProcessRunner(runtime);
   const host = new Host(runtime, runner);
   const request = Promise.withResolvers();

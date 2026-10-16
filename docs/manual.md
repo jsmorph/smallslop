@@ -14,16 +14,19 @@ The [README](../README.md#setup-and-commands) lists the setup and commands.
 
 ## Evaluating an expression in Node
 
-`evaluate` compiles source and creates a paused process.  `run` executes the
-process and returns a state record, and a completed process's `result` is a
-JavaScript value.  This command prints `42n`, Node's display of an exact
+A runtime requires the kernel source package, the class library in
+[`smalltalk/kernel`](../smalltalk/kernel) (see [Source
+packages](#source-packages)).  `evaluate` compiles source and creates a paused
+process.  `run` executes the process and returns a state record, and a
+completed process's `result` is a JavaScript value.  This command prints `42n`, Node's display of an exact
 integer:
 
 ```sh
 node --input-type=module <<'JS'
 import { Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const processId = runtime.evaluate('6 * 7');
 const state = runtime.run(processId);
 if (state.stop.reason === 'error') throw state.stop.error;
@@ -210,8 +213,8 @@ frame and yields when its process exhausts the instruction budget.  `to:do:`,
 
 The class library follows the ANSI protocols where ANSI defines them and
 Smalltalk-80 where it does not.  Most of it is Smallslop source in
-[`src/library.js`](../src/library.js), which the System Browser shows and the
-debugger steps through.  A small set of primitives in
+[`smalltalk/kernel`](../smalltalk/kernel), one file per class, which the
+System Browser shows and the debugger steps through.  A small set of primitives in
 [`src/primitives.js`](../src/primitives.js) and
 [`src/kernel.js`](../src/kernel.js) supplies arithmetic, indexing, string
 operations, and stream buffers.  Primitives cannot send messages, so every
@@ -233,7 +236,7 @@ Smallslop source.
 | `Set`, `Bag`, `Dictionary`, `IdentityDictionary` | `Collection`, `Dictionary` | Hash buckets written in Smallslop |
 | `Association` | `Object` | `key` and `value` |
 | `Stream`, `ReadStream`, `WriteStream` | `Object`, `Stream` | A collection and position, and a primitive buffer |
-| `Exception` and its subclasses, `ExceptionSet`, `Message` | `Object` | Smallslop source in [`src/exceptions.js`](../src/exceptions.js) with interpreter primitives (see [Exceptions](#exceptions)) |
+| `Exception` and its subclasses, `ExceptionSet`, `Message` | `Object` | Smallslop source with interpreter primitives in [`src/exceptions.js`](../src/exceptions.js) (see [Exceptions](#exceptions)) |
 
 ### Objects and classes
 
@@ -373,8 +376,9 @@ those classes come from literals, blocks, and host values.
 
 ```js
 import { Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const counterClass = runtime.defineClass('Counter', { slots: ['count'] });
 runtime.installSource(counterClass, 'initialize count := 0');
 runtime.installSource(counterClass, 'increment count := count + 1. ^count');
@@ -393,8 +397,9 @@ Inheritance and `super` sends work with source methods:
 
 ```js
 import { Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const base = runtime.defineClass('Base');
 const child = runtime.defineClass('Child', { superclass: base });
 runtime.installSource(base, 'answer ^40');
@@ -416,8 +421,9 @@ and `Object`, so every class understands `new` and the reflection messages.
 
 ```js
 import { Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const point = runtime.defineClass('Point', { slots: ['x', 'y'], classSlots: ['made'] });
 runtime.installSource(point, 'setX: newX y: newY x := newX. y := newY');
 runtime.installSource(point, 'x ^x');
@@ -520,15 +526,59 @@ variables other than `#none`.
 
 A file in continues past a failed class definition or method and records each
 failure with its class name and message.  A malformed file throws a
-`SyntaxError` with the character offset of the element.  `fileOut` lists
-bytecode and primitive methods in a comment, because they have no source.
+`SyntaxError` with the character offset of the element.  `fileOut` omits
+bytecode and primitive methods, which JavaScript installs, and writes no class
+definition for `Object`, which has no superclass.  A class definition that
+matches an existing class leaves the class unchanged, so a file can describe
+a class that JavaScript creates.
 
-`loadSourceDirectory(runtime, directory)` in
-[`server/source-files.mjs`](../server/source-files.mjs) reads every `.st` file
-in a directory.  It defines each class after its superclass, regardless of
-file order, then installs the methods of every file.  Each failure record
-names its file.  `writeClassFile(klass, directory)` writes `fileOut(klass)` to
-`ClassName.st`, replacing an existing file in one rename.
+### Source packages
+
+All Smallslop source is in interchange files under
+[`smalltalk/`](../smalltalk), one file per class, named `ClassName.st`.  A
+file defines or extends only the class it names.  JavaScript supplies the
+classes whose instances are JavaScript values, the primitives, and the
+bytecode `Block>>whileTrue:`.  Each package directory serves a set of
+runtimes:
+
+| Package | Classes | Loaded by |
+| --- | --- | --- |
+| `kernel` | `Object` protocol, class library, exceptions | Every runtime |
+| `tools` | `Inspector` | Page workspaces, server worlds, server component runtimes |
+| `workspace` | `Pane`, `SystemBrowser` | Page workspaces |
+| `server` | `Database`, `ResultSet` | Server worlds |
+
+`new Runtime({sources})` takes the kernel files as an array of `{name, text}`
+records and throws without them.  `loadSources(runtime, files,
+{beforeMethods})` in [`src/sources.js`](../src/sources.js) loads other
+packages.  It defines each class after its superclass, regardless of file
+order, calls `beforeMethods` so JavaScript can add primitives to the new
+classes, then installs the methods.  It returns `{classes, methods,
+failures}`, and each failure names its file.
+
+| Function | Module | Result |
+| --- | --- | --- |
+| `readPackageSync(name, root)`, `readPackage(name, root)` | [`server/source-files.mjs`](../server/source-files.mjs) | The package's files as `{name, text, version}`, sorted by name.  `root` defaults to the repository's `smalltalk/` directory. |
+| `writeSourceFile(root, name, file, text, expectedVersion)` | `server/source-files.mjs` | Write a file if its current version is `expectedVersion`, or `null` for a new file, and return the new version |
+| `fetchSources(names)` | [`ui/sources.js`](../ui/sources.js) | Fetch packages from `/api/smalltalk/<name>` on the page's server and return `{name: files}` |
+
+A version is the SHA-256 digest of the file text in base64url.  A write whose
+expected version differs from the file's current version fails with `status`
+412 and the current `version`.  The server process runs writes to one file in
+order, so two writers that read the same version cannot both succeed.  The
+Web server and the test server in `scripts/browser.js` answer
+`GET /api/smalltalk/<name>`.
+
+```js
+import { Runtime } from './src/index.js';
+import { loadSources } from './src/sources.js';
+import { readPackageSync } from './server/source-files.mjs';
+
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
+console.log(loadSources(runtime, readPackageSync('tools')).classes);
+```
+
+The output is `[ 'Inspector' ]`.
 
 ## Exceptions
 
@@ -663,8 +713,9 @@ successive runs and yield between them:
 
 ```js
 import { Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const processId = runtime.evaluate(`
   | i total |
   i := 1. total := 0.
@@ -753,8 +804,9 @@ This example pauses on method entry, changes an argument, and resumes:
 
 ```js
 import { Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const klass = runtime.defineClass('Example');
 const method = runtime.installSource(klass, 'twice: value ^value * 2');
 const breakpointId = runtime.breakpoint(method);
@@ -791,8 +843,9 @@ install a method and retry from that position:
 
 ```js
 import { createRepairDemo } from './examples/repair.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const { runtime, klass, processId } = createRepairDemo();
+const { runtime, klass, processId } = createRepairDemo(readPackageSync('kernel'));
 const paused = runtime.run(processId);
 const frameId = paused.frames[0].id;
 const evaluationId = runtime.evaluate('captured := 42', { processId, frameId });
@@ -832,8 +885,9 @@ requests throw to the adapter's caller.
 
 ```js
 import { Debugger, Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const debugger_ = new Debugger(new Runtime());
+const debugger_ = new Debugger(new Runtime({ sources: readPackageSync('kernel') }));
 const send = request => JSON.parse(JSON.stringify(
   debugger_.dispatch(JSON.parse(JSON.stringify(request))),
 ));
@@ -934,8 +988,9 @@ offset:
 
 ```js
 import { Debugger, Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const debugger_ = new Debugger(new Runtime());
+const debugger_ = new Debugger(new Runtime({ sources: readPackageSync('kernel') }));
 const entry = debugger_.dispatch({ op: 'evaluate', source: '[42] value' });
 const methodId = entry.frames[0].methodId;
 const method = debugger_.dispatch({ op: 'method', id: methodId });
@@ -964,8 +1019,9 @@ arrays.  `classOf(value)` returns their runtime class.
 
 ```js
 import { Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const serviceClass = runtime.defineClass('HostService');
 runtime.primitive(serviceClass, 'square:', 1, (_receiver, [value]) => {
   if (typeof value !== 'bigint') throw new TypeError('square: expects an Integer.');
@@ -1012,8 +1068,9 @@ returns its value, including a wrapped promise if the property contains one.
 
 ```js
 import { Host, ProcessRunner, Runtime } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const runner = new ProcessRunner(runtime);
 const host = new Host(runtime, runner);
 const service = host.value({ answer: async () => 42n });
@@ -1089,8 +1146,9 @@ operand-stack depth along reachable paths.
 
 ```js
 import { Code, Runtime, assemble } from './src/index.js';
+import { readPackageSync } from './server/source-files.mjs';
 
-const runtime = new Runtime();
+const runtime = new Runtime({ sources: readPackageSync('kernel') });
 const code = new Code({
   literals: [42n],
   bytes: assemble([['constant', 0], ['return']]),
@@ -1149,6 +1207,7 @@ registers later.
 | `container` | Element that holds the panes |
 | `toolbar` | Element that receives the workspace buttons |
 | `definitions` | Pane definitions to register at creation |
+| `sources` | The `kernel`, `tools`, and `workspace` packages from `fetchSources` |
 | `storage`, `storageKey` | A `Storage` object, such as `localStorage`, and the key for the saved arrangement |
 | `onChange` | Function called after pane changes |
 
@@ -1317,8 +1376,10 @@ code](../examples/repair.js) that `npm run demo` runs in Node.
 ## Server runtime
 
 `ServerWorld` in [`server/world.mjs`](../server/world.mjs) is a Smallslop
-runtime for Node with a `Database` object.  `new ServerWorld(path)` opens the
-SQLite database at `path`, or a private in-memory database for `:memory:`.
+runtime for Node with a `Database` object.  `new ServerWorld(path,
+{sourceRoot})` reads its packages from `sourceRoot`, which defaults to the
+repository's `smalltalk/` directory.  It opens the SQLite database at `path`,
+or a private in-memory database for `:memory:`.
 SQL runs in a separate process, so the server debugger can respond while a
 statement runs.  [Agent and Web Server](agent.md#server-commands) lists the
 commands that `dispatch(request, {signal})` accepts.

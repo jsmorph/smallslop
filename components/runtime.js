@@ -1,15 +1,17 @@
 import { Debugger, Host, HostOperation, Inspectors, ProcessRunner, Runtime } from '../src/index.js';
 import { checkSize, decode, encode, errorData, referenceKey, validateReference } from './values.js';
 import { selectorParts, validateManifest } from './manifest.js';
+import { loadSources, requireLoaded } from '../src/sources.js';
 
 export class ComponentRuntime {
-  constructor({ namespace, name, incarnation = crypto.randomUUID(), host, debugger: debugger_, source, remote,
+  constructor({ namespace, name, incarnation = crypto.randomUUID(), host, sources, debugger: debugger_, source, remote,
     maxActive = 256, maxCalls = 1024, changed = () => {}, failed = () => {} }) {
     if (![maxActive, maxCalls].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error('Call limits must be positive integers.');
     this.maxActive = maxActive;
     this.maxCalls = maxCalls;
     this.identity = { namespace, runtime: name, incarnation };
-    this.runtime = host?.runtime ?? new Runtime();
+    this.runtime = host?.runtime ?? new Runtime({ sources: sources.kernel });
+    if (!host) requireLoaded(loadSources(this.runtime, sources.tools), 'tools');
     this.runner = host?.runner ?? new ProcessRunner(this.runtime);
     this.host = host ?? new Host(this.runtime, this.runner);
     this.debugger = debugger_ ?? new Debugger(this.runtime);

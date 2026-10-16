@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Code, Runtime, compileMethod } from '../src/index.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 function evaluate(runtime, source, options) {
   const state = runtime.run(runtime.evaluate(source, options));
@@ -10,7 +13,7 @@ function evaluate(runtime, source, options) {
 }
 
 test('literal parsing preserves integer precision and floating values', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   assert.equal(evaluate(runtime, '9007199254740993123456'), 9007199254740993123456n);
   assert.equal(evaluate(runtime, '-9007199254740993'), -9007199254740993n);
   assert.equal(evaluate(runtime, '2.5e2'), 250);
@@ -22,7 +25,7 @@ test('literal parsing preserves integer precision and floating values', () => {
 });
 
 test('unary, binary, and keyword sends use Smalltalk precedence', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const integer = runtime.classes.get('Integer');
   runtime.installSource(integer, 'plus: a times: b ^(self + a) * b');
   assert.equal(evaluate(runtime, '1 + 2 * 3'), 9n);
@@ -32,7 +35,7 @@ test('unary, binary, and keyword sends use Smalltalk precedence', () => {
 });
 
 test('methods compile arguments, slots, super sends, and implicit self return', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const base = runtime.defineClass('Base', { slots: ['stored'] });
   const child = runtime.defineClass('Child', { superclass: base });
   runtime.installSource(base, 'store: value stored := value');
@@ -45,7 +48,7 @@ test('methods compile arguments, slots, super sends, and implicit self return', 
 });
 
 test('blocks share bindings and can shadow outer names', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   assert.equal(evaluate(runtime, '| x f | x := 1. f := [x := 2]. f value. x'), 2n);
   assert.equal(evaluate(runtime, '| x | x := 1. [:x | | y | y := x. y] value: 8'), 8n);
   assert.equal(evaluate(runtime, '| x | x := 1. [| x | x := 2] value. x'), 1n);
@@ -55,7 +58,7 @@ test('blocks share bindings and can shadow outer names', () => {
 });
 
 test('source positions and paused evaluation preserve lexical identity', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const klass = runtime.defineClass('Example');
   const source = 'answer | captured | captured := 10. ^[[captured] value] value';
   const method = runtime.installSource(klass, source);
@@ -74,7 +77,7 @@ test('source positions and paused evaluation preserve lexical identity', () => {
 });
 
 test('syntax and binding errors report source locations', () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   for (const source of ['foo | x x | ^x', 'foo ^missing', 'foo ^[1', 'foo ^1. 2', 'foo ^super', 'foo ^\'oops']) {
     assert.throws(() => compileMethod(runtime.objectClass, source), error =>
       error instanceof SyntaxError && Number.isInteger(error.position) && error.line >= 1 && error.column >= 1);

@@ -2,9 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Debugger, Host, ProcessRunner, Runtime } from '../src/index.js';
 import { Inspectors } from '../src/inspector.js';
+import { readPackageSync } from '../server/source-files.mjs';
+import { loadSources } from '../src/sources.js';
+
+const kernel = readPackageSync('kernel');
+const tools = readPackageSync('tools');
 
 function setup() {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
+  loadSources(runtime, tools);
   const runner = new ProcessRunner(runtime);
   const host = new Host(runtime, runner);
   const debugger_ = new Debugger(runtime);

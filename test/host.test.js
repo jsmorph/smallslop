@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Debugger, Host, HostOperation, ProcessRunner, Runtime } from '../src/index.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 const setup = options => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const runner = new ProcessRunner(runtime, options);
   return { runtime, runner, host: new Host(runtime, runner) };
 };

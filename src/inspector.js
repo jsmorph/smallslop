@@ -1,11 +1,5 @@
 import { Debugger } from './debugger.js';
 
-const methods = [
-  `select: name selection := service call: 'field' with: name`,
-  `page: start offset := service call: 'offset' with: start. selection := 'self'`,
-  `expression: text expression := service call: 'text' with: text`,
-  `evaluate: mode process := service call: 'evaluate' with: expression with: mode`,
-];
 const controls = ['run', 'resume', 'pause', 'step', 'stepOver', 'stepOut', 'retry', 'cancel'];
 const selectors = { select: 'select:', page: 'page:', expression: 'expression:', evaluate: 'evaluate:' };
 
@@ -17,10 +11,8 @@ export class Inspectors {
     this.id = crypto.randomUUID();
     this.nextId = 1;
     const runtime = host.runtime;
-    const klass = runtime.defineClass('Inspector', { category: 'Tools-Inspector',
-      slots: ['subject', 'selection', 'offset', 'expression', 'process', 'service'] });
-    for (const source of methods) runtime.installSource(klass, source, { protocol: 'inspecting' });
-    this.klass = klass;
+    this.klass = runtime.classes.get('Inspector');
+    if (!this.klass) throw new Error('Load the tools sources before creating inspectors.');
   }
 
   get(id) {

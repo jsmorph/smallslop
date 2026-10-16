@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Code, Runtime, assemble } from '../src/index.js';
+import { readPackageSync } from '../server/source-files.mjs';
+
+const kernel = readPackageSync('kernel');
 
 const code = (instructions, options = {}) => new Code({ ...options, bytes: assemble(instructions) });
 const constant = value => code([['constant', 0], ['return']], { literals: [value] });
 const setup = () => {
-  const runtime = new Runtime();
+  const runtime = new Runtime({ sources: kernel });
   const klass = runtime.defineClass('Example', { slots: ['stored'] });
   return { runtime, klass, object: runtime.newObject(klass) };
 };

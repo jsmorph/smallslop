@@ -51,7 +51,7 @@ export class Block {
 export class Runtime {
   static failureLimit = 32;
 
-  constructor() {
+  constructor({ sources } = {}) {
     this.classes = new Map();
     this.methods = new WeakRegistry();
     this.processes = new Map();
@@ -85,7 +85,7 @@ export class Runtime {
       const selector = count ? 'value:'.repeat(count) : 'value';
       this.primitive(this.classes.get('Block'), selector, count, (receiver, args) => new BlockCall(receiver, args));
     }
-    installKernel(this);
+    installKernel(this, sources);
   }
 
   defineClass(name, { superclass = this.objectClass, slots = [], classSlots = [], category = 'Unclassified' } = {}) {

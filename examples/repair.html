@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smallslop: debugger example</title>
+<style>
+  body { max-width: 54rem; margin: 3rem auto; padding: 0 1rem; font: 17px/1.6 system-ui, sans-serif; color: #242424; background: #fafafa; }
+  h1 { font-size: 1.7rem; }
+  pre { white-space: pre-wrap; padding: 1rem; border: 1px solid #aaa; background: white; font-size: 14px; }
+  button { font: inherit; padding: .35rem .8rem; cursor: pointer; }
+</style>
+<h1>Smallslop: debugger example</h1>
+<p>The interpreter pauses in a nested block, changes a captured binding,
+  encounters a missing method, installs it, and retries the suspended send.</p>
+<button id="run" type="button">Run example</button>
+<pre id="output" role="status"></pre>
+<p>The browser console exposes <code>smallslop.createRepairDemo()</code>.
+  Its runtime provides inspection, stepping, variable edits, method installation,
+  and retry through the same API used by this example.</p>
+<script type="module">
+  import { createRepairDemo, runAgentRepairDemo, runRepairDemo } from './repair.js';
+  import { Debugger, Runtime } from '../src/index.js';
+
+  globalThis.smallslop = { Debugger, Runtime, createRepairDemo, runAgentRepairDemo, runRepairDemo };
+  const output = document.querySelector('#output');
+  function run() {
+    try {
+      const demo = runRepairDemo();
+      const agent = runAgentRepairDemo();
+      const runtime = new Runtime();
+      const arithmetic = runtime.run(runtime.evaluate('9007199254740993 + 2'));
+      if (arithmetic.result !== 9007199254740995n) throw new Error('Integer arithmetic lost precision.');
+      output.textContent = [
+        ...demo.states, `JSON debugger completed with exact integer ${agent.value}.`,
+        `Integer arithmetic returned ${arithmetic.result}.`,
+      ].join('\n');
+      output.dataset.result = 'passed';
+    } catch (error) {
+      output.textContent = error.stack;
+      output.dataset.result = 'failed';
+    }
+  }
+  document.querySelector('#run').addEventListener('click', run);
+  run();
+</script>
+</html>

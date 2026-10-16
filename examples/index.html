@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smallslop: live counters</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 92rem; padding: 1.5rem; color: #202328; background: #f4f3ef; font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 1.8rem; margin: 0; } h2 { font-size: 1.2rem; margin: 0 0 .75rem; } h3 { font-size: 1rem; margin: 1rem 0 .4rem; }
+  p { margin: .5rem 0 1rem; } button, input, select, textarea { font: inherit; }
+  button { padding: .35rem .65rem; border: 1px solid #8b9097; border-radius: 3px; background: white; cursor: pointer; }
+  button:hover:enabled { background: #e5edf4; } button:disabled { opacity: .45; cursor: default; }
+  :focus-visible { outline: 2px solid #176797; outline-offset: 2px; }
+  input, select, textarea { border: 1px solid #999fa5; border-radius: 2px; background: white; padding: .3rem; }
+  textarea { display: block; width: 100%; font: 14px/1.5 ui-monospace, monospace; resize: vertical; }
+  pre, code { font-family: ui-monospace, monospace; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .5rem 0; padding: .6rem; background: #f1f3f5; max-height: 24rem; overflow: auto; font-size: 13px; }
+  mark { background: #ffdf8a; color: inherit; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); gap: 1rem; margin: 1rem 0; }
+  .counter, section { border: 1px solid #c2c5c8; background: white; padding: 1rem; border-radius: 4px; min-width: 0; }
+  .counter header { display: flex; justify-content: space-between; align-items: baseline; }
+  .count { display: block; font-size: 2.3rem; font-variant-numeric: tabular-nums; margin: .5rem 0; }
+  .counter .row { margin-top: .6rem; }
+  .status, .hint { color: #515960; font-size: 13px; }
+  .workspace { display: grid; grid-template-columns: 1.15fr 1fr; gap: 1rem; align-items: start; }
+  label { display: inline-block; } #process, #frames { width: 100%; margin: .3rem 0 .6rem; }
+  .binding { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 2fr) auto; gap: .4rem; margin: .35rem 0; align-items: center; }
+  .binding input { min-width: 0; width: 100%; font-family: ui-monospace, monospace; font-size: 13px; }
+  #notice { min-height: 1.5em; white-space: pre-wrap; } #notice[data-error="true"] { color: #9b2020; }
+  #source { min-height: 6rem; } #method-source { min-height: 12rem; } #commands { margin-top: 1rem; }
+  details { margin-top: .75rem; } summary { cursor: pointer; }
+  footer { margin-top: 1rem; }
+  @media (max-width: 850px) { .workspace { grid-template-columns: 1fr; } body { padding: .75rem; } }
+  @media (max-width: 500px) { .binding { grid-template-columns: minmax(0, 1fr) auto; } .binding > span { grid-column: 1 / -1; overflow-wrap: anywhere; } }
+</style>
+<header>
+  <h1>Smallslop</h1>
+  <p>Two objects share the Counter class.  Their methods handle clicks, update the DOM, and wait for host operations.</p>
+  <div class="row"><button id="add-counter" type="button">Add counter</button><a href="./repair.html">Scripted repair example</a></div>
+</header>
+<div id="counters" class="counters"></div>
+<p id="notice" role="status" aria-live="polite"></p>
+<main class="workspace">
+  <section aria-labelledby="debugger-title">
+    <h2 id="debugger-title">Debugger</h2>
+    <label for="process">Process</label><select id="process"></select>
+    <div id="process-status" class="status"></div>
+    <div class="row" id="controls">
+      <button data-op="run" type="button">Run</button><button data-op="resume" type="button">Resume</button>
+      <button data-op="pause" type="button">Pause</button><button data-op="step" type="button">Step into</button>
+      <button data-op="stepOver" type="button">Step over</button><button data-op="stepOut" type="button">Step out</button>
+      <button data-op="retry" type="button">Retry</button><button data-op="cancel" type="button">Cancel</button>
+    </div>
+    <h3>Frames</h3><select id="frames" size="4" aria-label="Frames"></select>
+    <div class="row"><button id="break-here" type="button">Break here</button><button id="edit-frame" type="button">Edit frame method</button><button id="inspect-receiver" type="button">Inspect receiver</button></div>
+    <pre id="source" aria-label="Current source"></pre>
+    <h3>Bindings</h3><p class="hint">Values use the debugger's JSON encoding.  Scope 0 is the selected frame's local scope.</p><div id="bindings"></div>
+    <h3>Pending send</h3><div id="pending"></div>
+    <details><summary>Operand stack and object inspection</summary><pre id="stack"></pre><pre id="object"></pre></details>
+    <h3>Evaluate in the selected frame</h3>
+    <textarea id="expression" rows="2" aria-label="Expression">self</textarea>
+    <button id="evaluate" type="button">Evaluate</button>
+  </section>
+  <section aria-labelledby="editor-title">
+    <h2 id="editor-title">Counter methods</h2>
+    <div class="row"><select id="method" aria-label="Method"></select><button id="new-method" type="button">New method</button></div>
+    <p id="method-version" class="status"></p>
+    <textarea id="method-source" spellcheck="false" aria-label="Method source"></textarea>
+    <div class="row"><button id="install" type="button">Install method</button><button id="break-method" type="button">Break at entry</button></div>
+    <p class="hint">New sends use the installed version.  An active frame keeps its existing version.</p>
+    <h3>Breakpoints</h3><div id="breakpoints"></div>
+    <details open>
+      <summary>Exercises</summary>
+      <p>Check Pause next event, click Increment, then step into the callback.  Change its captured <code>step</code> binding and resume.  The other counter remains available.</p>
+      <p>Missing method increments the stored count before sending <code>missingText</code>.  Install <code>missingText ^count asString</code>, then retry.</p>
+      <p>Reject later pauses at the host call after rejection.  Change its last pending argument to <code>{"kind":"boolean","value":false}</code>, then retry.</p>
+    </details>
+    <div id="commands">
+      <h3>JSON commands</h3>
+      <textarea id="command" rows="3" spellcheck="false" aria-label="JSON command">{"op":"processes"}</textarea>
+      <button id="send-command" type="button">Send command</button><pre id="command-result"></pre>
+      <p class="hint">The console exposes <code>smallslop.dispatch(request)</code>.  Agent handles remain valid until explicitly released.</p>
+    </div>
+  </section>
+</main>
+<footer class="status" id="resources"></footer>
+<script type="module" src="./counters.js"></script>
+</html>

@@ -1,0 +1,16 @@
+body { margin: 0; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #161a20; color: #e9edf2; font: 14px system-ui, sans-serif; }
+#toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: #252c36; border-bottom: 1px solid #3d4856; }
+#toolbar h1 { margin: 0 8px 0 0; font-size: 16px; }
+#connection-status { color: #bdc8d5; font-size: 12px; }
+#workspace { position: relative; overflow: hidden; min-height: 240px; }
+button, textarea { font: inherit; }
+.agent { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
+.agent-messages { flex: 1; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 8px; }
+.agent-message { padding: 6px 8px; border-radius: 5px; background: #2a323e; overflow-wrap: anywhere; }
+.agent-message.user { background: #2f4258; }
+.agent-message.error { background: #4a2a2a; }
+.agent-message .role { display: block; color: #bdc8d5; font-size: 11px; text-transform: uppercase; }
+.agent-message p { margin: 4px 0 0; white-space: pre-wrap; }
+.agent-message pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px ui-monospace, monospace; }
+.agent-form { display: flex; gap: 8px; margin-top: 10px; }
+.agent-form textarea { flex: 1; min-height: 3em; resize: vertical; }

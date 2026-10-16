@@ -1,0 +1,19 @@
+{
+  "name": "smallslop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.js",
+  "scripts": {
+    "test": "node --expose-gc --test --test-isolation=none test/*.test.js",
+    "demo": "node examples/run-repair.js",
+    "test:browser": "node scripts/browser.js",
+    "test:workspace": "node scripts/test-workspace.mjs",
+    "serve": "node scripts/browser.js --serve",
+    "workspace": "node examples/workspace.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.83.0"
+  },
+  "license": "MIT"
+}

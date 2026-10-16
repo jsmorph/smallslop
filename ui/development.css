@@ -1,0 +1,62 @@
+.inspector { overflow: auto; padding: 10px 12px 20px; display: grid; align-content: start; gap: 10px; }
+.inspector label { flex-wrap: wrap; }
+.inspector select { max-width: 100%; min-width: 0; }
+.inspector textarea { font: 12px/1.5 ui-monospace, monospace; }
+.inspector .source { height: 160px; }
+.inspector .result { max-height: 300px; overflow: auto; border: 1px solid #46505f; background: #1c2129; padding: 8px; }
+.section-label { font-size: 12px; font-weight: 600; color: #bdcbe0; margin: 2px 0 0; }
+.window[data-kind="systemBrowser"] { color-scheme: light; color: #172217; background: #c7dcaf; border-color: #829a70; }
+.window[data-kind="systemBrowser"] .titlebar { background: #bdd6a3; }
+.window[data-kind="systemBrowser"].active .titlebar { background: #c7e6a5; }
+.window[data-kind="systemBrowser"] .titlebar h2 { font-size: 15px; }
+.window[data-kind="systemBrowser"] .window-id { color: #4a5d3c; }
+.window[data-kind="systemBrowser"] .close { color: #24361c; border-color: #8ba379; }
+.system-browser { display: flex; flex-direction: column; gap: 5px; height: 100%; min-height: 0; padding: 6px 7px 8px; overflow: auto; }
+.system-browser button { color: #1d281b; background: #eef0eb; border-color: #899581; border-radius: 2px; padding: 4px 9px; font-size: 12px; }
+.system-browser button:hover { background: #fff; }
+.system-browser button[aria-pressed="true"] { background: #bcb8e3; }
+.browser-panes { display: grid; grid-template-columns: repeat(4, minmax(135px, 1fr)); grid-template-rows: minmax(0, 1fr); gap: 5px; flex: 0 0 190px; min-height: 150px; overflow: auto; }
+.browser-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.browser-pane label { display: flex; flex: 1; flex-direction: column; align-items: stretch; gap: 3px; min-height: 0; font-size: 11px; }
+.browser-pane select { flex: 1; min-height: 0; width: 100%; padding: 2px 0; border: 1px solid #8a9c7d; border-radius: 0; color: #182118; background: #fbfcf9; font: 13px/1.5 ui-monospace, monospace; }
+.browser-pane option { padding: 2px 5px; white-space: pre; }
+.browser-pane option:checked { color: #101529; background: #bcb8e3 linear-gradient(#bcb8e3, #bcb8e3); }
+.browser-sides { display: flex; gap: 3px; margin-top: 4px; }
+.browser-sides button { flex: 1; }
+.browser-actions, .browser-editing { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.browser-actions button { flex: 1 0 auto; }
+.browser-shared { margin: 0; font-size: 12px; padding: 4px 6px; background: #f0ecd1; }
+.system-browser .browser-source { flex: 1 0 150px; width: 100%; min-height: 150px; margin: 0; border: 1px solid #8a9c7d; border-radius: 0; padding: 10px; color: #19221b; background: #fff; font: 14px/1.55 ui-monospace, monospace; tab-size: 2; resize: none; white-space: pre; }
+.system-browser .browser-source[readonly] { background: #f6f8f2; }
+.browser-editing label { margin-left: auto; min-width: 0; font-size: 12px; }
+.browser-editing input { min-width: 0; width: 140px; color: #172217; background: #fff; border: 1px solid #8a9c7d; border-radius: 2px; padding: 4px 6px; font-size: 12px; }
+.browser-status { flex: 0 0 auto; min-height: 24px; border-top: 1px solid #a2b391; padding: 5px 20px 0 2px; font-size: 11px; overflow-wrap: anywhere; }
+.browser-error { color: #7c1720; }
+.browser-results { flex: 0 0 auto; max-height: 150px; overflow: auto; background: #f6f8f2; border: 1px solid #8a9c7d; }
+.browser-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 6px; font-size: 12px; border-bottom: 1px solid #c1cbbb; }
+.browser-result-list { display: flex; flex-direction: column; padding: 2px; }
+.browser-result-list button { text-align: left; white-space: pre; border: 0; background: transparent; font-family: ui-monospace, monospace; }
+.system-browser :focus-visible { outline-color: #6658a7; }
+.window[data-kind="objectInspector"] { color-scheme: light; color: #22251c; background: #e5e7bf; border-color: #a0a478; }
+.window[data-kind="objectInspector"] .titlebar { background: #d9dcaa; }
+.window[data-kind="objectInspector"].active .titlebar { background: #e5e9b6; }
+.window[data-kind="objectInspector"] .window-id { color: #555c39; }
+.window[data-kind="objectInspector"] .close { color: #323820; border-color: #a0a478; }
+.object-inspector { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; padding: 8px 9px 12px; overflow: auto; }
+.object-inspector button { color: #22251c; background: #f0f1e7; border-color: #929b79; border-radius: 2px; padding: 4px 8px; font-size: 12px; }
+.object-inspector button:hover { background: #fff; }
+.inspector-identity { font: 12px ui-monospace, monospace; overflow-wrap: anywhere; }
+.inspector-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.inspector-actions[hidden] { display: none; }
+.inspector-actions output { font-size: 11px; }
+.inspector-panes { display: grid; grid-template-columns: minmax(100px, 32%) minmax(0, 1fr); gap: 6px; flex: 1 0 155px; min-height: 155px; }
+.inspector-fields { width: 100%; min-height: 0; color: #20251b; background: #fff; border: 1px solid #929b79; border-radius: 0; padding: 3px; font: 14px ui-monospace, monospace; }
+.inspector-fields option { padding: 2px 3px; }
+.inspector-fields option:checked { color: #171a30; background: #c1bde6 linear-gradient(#c1bde6, #c1bde6); }
+.inspector-value { margin: 0; padding: 8px; min-width: 0; overflow: auto; border: 1px solid #929b79; background: #fff; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.object-inspector .inspector-expression { flex: 0 0 85px; min-height: 65px; width: 100%; color: #20251b; background: #fff; border: 1px solid #929b79; border-radius: 0; padding: 8px; font: 14px/1.5 ui-monospace, monospace; resize: vertical; }
+.inspector-result { flex: 0 0 auto; max-height: 100px; margin: 0; padding: 6px; overflow: auto; color: #20251b; background: #f7f8ee; border: 1px solid #b0b692; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inspector-status { font-size: 12px; overflow-wrap: anywhere; }
+.inspector-error { color: #8a1722; }
+.object-inspector :focus-visible { outline-color: #6658a7; }
+.inspector .row { display: flex; flex-wrap: wrap; gap: 6px; }

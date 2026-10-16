@@ -58,7 +58,9 @@ export class Runtime {
     this.identityHashes = new WeakMap();
     this.nextIdentityHash = 1;
     this.objectClass = this.defineClass('Object', { superclass: null, category: 'Kernel-Objects' });
-    for (const name of ['Class', 'UndefinedObject', 'Boolean', 'Integer', 'Float', 'String', 'Array', 'Block', 'HostObject']) {
+    this.objectClass.metaclass.superclass = this.defineClass('Class', { category: 'Kernel-Classes' });
+    this.defineClass('Metaclass', { superclass: this.classes.get('Class'), category: 'Kernel-Classes' });
+    for (const name of ['UndefinedObject', 'Boolean', 'Integer', 'Float', 'String', 'Array', 'Block', 'HostObject']) {
       const category = ['Integer', 'Float'].includes(name) ? 'Kernel-Numbers'
         : name === 'HostObject' ? 'Kernel-Host' : 'Kernel-Objects';
       this.defineClass(name, { category });
@@ -71,7 +73,8 @@ export class Runtime {
     this.primitive(this.objectClass, 'yourself', 0, receiver => receiver);
     this.primitive(this.objectClass, 'class', 0, receiver => this.classOf(receiver));
     this.primitive(this.objectClass, '==', 1, (receiver, [other]) => receiver === other);
-    this.primitive(this.classes.get('Class'), 'new', 0, receiver => this.newObject(receiver));
+    this.primitive(this.classes.get('Class'), 'new', 0, receiver => this.newObject(receiver), { protocol: 'instance creation' });
+    this.primitive(this.classes.get('Class'), 'basicNew', 0, receiver => this.newObject(receiver), { protocol: 'instance creation' });
     for (let count = 0; count <= 4; count++) {
       const selector = count ? 'value:'.repeat(count) : 'value';
       this.primitive(this.classes.get('Block'), selector, count, (receiver, args) => new BlockCall(receiver, args));
@@ -79,18 +82,31 @@ export class Runtime {
     installKernel(this);
   }
 
-  defineClass(name, { superclass = this.objectClass, slots = [], category = 'Unclassified' } = {}) {
-    if (typeof name !== 'string' || !name || this.classes.has(name)) throw new Error(`Invalid or existing class: ${name}.`);
-    if (superclass !== null && superclass?.runtime !== this) throw new Error('Superclass belongs to another runtime.');
-    if (slots.some(slot => typeof slot !== 'string' || !slot)) throw new Error('Slots need names.');
+  defineClass(name, { superclass = this.objectClass, slots = [], classSlots = [], category = 'Unclassified' } = {}) {
+    if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(name) || this.classes.has(name)) throw new Error(`Invalid or existing class: ${name}.`);
+    if (superclass !== null && (superclass?.runtime !== this || superclass.meta)) throw new Error('Superclass must be a class in this runtime.');
+    if ([...slots, ...classSlots].some(slot => typeof slot !== 'string' || !slot)) throw new Error('Slots need names.');
     if (typeof category !== 'string' || !category.trim()) throw new Error('A class category needs a name.');
     const klass = new SmallClass(this, name, superclass, slots, category);
+    klass.metaclass = new SmallClass(this, `${name} class`, superclass?.metaclass ?? this.classes.get('Class') ?? null, classSlots, category, klass);
+    klass.slotValues = Object.fromEntries(klass.metaclass.slots.map(slot => [slot, null]));
     this.classes.set(name, klass);
     return klass;
   }
 
+  classNamed(name) {
+    const meta = typeof name === 'string' && name.endsWith(' class');
+    const klass = this.classes.get(meta ? name.slice(0, -' class'.length) : name);
+    return meta ? klass?.metaclass : klass;
+  }
+
+  behaviors() {
+    return [...this.classes.values()].flatMap(klass => [klass, klass.metaclass]);
+  }
+
   newObject(klass) {
     if (!(klass instanceof SmallClass) || klass.runtime !== this) throw new Error('Expected a class in this runtime.');
+    if (klass.meta) throw new Error(`${klass.name} has one instance, ${klass.instanceClass.name}.`);
     for (let current = klass; current; current = current.superclass) {
       if (this.nativeClasses.has(current)) throw new Error(`${klass.name} requires a native value constructor.`);
     }
@@ -121,7 +137,7 @@ export class Runtime {
     }
     if (value instanceof SmallClass) {
       if (value.runtime !== this) throw new Error('Class belongs to another runtime.');
-      return this.classes.get('Class');
+      return value.meta ? this.classes.get('Metaclass') : value.metaclass;
     }
     if (value instanceof SmallSymbol) return this.classes.get('Symbol');
     if (value instanceof SmallCharacter) return this.classes.get('Character');
@@ -482,13 +498,14 @@ export class Runtime {
       case Op.read: stack.push(frame.environment.at(...args).values[args[1]]); break;
       case Op.write: need(1); frame.environment.at(...args).values[args[1]] = stack.at(-1); break;
       case Op.slot:
-      case Op.storeSlot:
-        if (!(frame.receiver instanceof SmallObject) || !Object.hasOwn(frame.receiver.slots, literal)) {
-          throw new Error(`Unknown instance slot: ${literal}.`);
-        }
-        if (op === Op.slot) stack.push(frame.receiver.slots[literal]);
-        else { need(1); frame.receiver.slots[literal] = stack.at(-1); }
+      case Op.storeSlot: {
+        const store = frame.receiver instanceof SmallObject ? frame.receiver.slots
+          : frame.receiver instanceof SmallClass && !frame.receiver.meta ? frame.receiver.slotValues : null;
+        if (!store || !Object.hasOwn(store, literal)) throw new Error(`Unknown instance slot: ${literal}.`);
+        if (op === Op.slot) stack.push(store[literal]);
+        else { need(1); store[literal] = stack.at(-1); }
         break;
+      }
       case Op.block: stack.push(new Block(frame, literal, args[0])); break;
       case Op.global: {
         const klass = this.classes.get(literal);

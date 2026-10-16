@@ -37,6 +37,14 @@ function installTextProtocol(runtime) {
   test('isLowercase', /^\p{Ll}$/u);
   test('isVowel', /^[aeiouAEIOU]$/);
   test('isSeparator', /^[ \t\n\r\f]$/);
+  const factory = runtime.classes.get('Character').metaclass;
+  runtime.primitive(factory, 'codePoint:', 1, (_receiver, [codePoint]) => {
+    if (typeof codePoint !== 'bigint' || codePoint < 0n || codePoint > 0x10ffffn) throw new Error('codePoint: requires an Integer from 0 through 1114111.');
+    return SmallCharacter.of(Number(codePoint));
+  }, { protocol: 'instance creation' });
+  for (const [selector, codePoint] of [['cr', 13], ['lf', 10], ['space', 32], ['tab', 9]]) {
+    runtime.primitive(factory, selector, 0, () => SmallCharacter.of(codePoint), { protocol: 'instance creation' });
+  }
   protocol('Integer', 'asCharacter', 0, receiver => {
     if (receiver < 0n || receiver > 0x10ffffn) throw new Error('asCharacter requires a code point from 0 through 1114111.');
     return SmallCharacter.of(Number(receiver));
@@ -81,8 +89,10 @@ function installObjectProtocol(runtime) {
 
   const klass = runtime.classes.get('Class');
   const classes = () => [...runtime.classes.values()].sort((a, b) => a.name.localeCompare(b.name));
-  const subclasses = receiver => classes().filter(candidate => candidate.superclass === receiver);
+  const subclasses = receiver => receiver.meta ? subclasses(receiver.instanceClass).map(child => child.metaclass)
+    : classes().filter(candidate => candidate.superclass === receiver);
   protocol(klass, 'name', 0, receiver => receiver.name, 'accessing');
+  protocol(runtime.classes.get('Metaclass'), 'soleInstance', 0, receiver => receiver.instanceClass, 'accessing');
   protocol(klass, 'category', 0, receiver => receiver.category, 'accessing');
   protocol(klass, 'superclass', 0, receiver => receiver.superclass, 'accessing class hierarchy');
   protocol(klass, 'subclasses', 0, receiver => subclasses(receiver), 'accessing class hierarchy');

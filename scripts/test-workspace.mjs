@@ -16,10 +16,10 @@ let app;
 let browser;
 let cdp;
 let browserError = '';
-let hold = null;
 
 async function testAgent({ page, server, onEvent }) {
   const tools = smallslopTools({ page, server });
+  let stopped = null;
   const call = async (name, args) => {
     onEvent({ role: 'tool', text: `${name} ${JSON.stringify(args)}` });
     const result = await tools.find(tool => tool.name === name).execute('test-call', args, new AbortController().signal);
@@ -30,6 +30,7 @@ async function testAgent({ page, server, onEvent }) {
   return {
     model: 'test/fixture',
     async prompt(message, context) {
+      stopped = Promise.withResolvers();
       const state = await call('smallslop_state', {});
       assert.ok(state.commands.some(command => command.op === 'browse'));
       assert.equal(context.focused, state.focused);
@@ -50,13 +51,12 @@ async function testAgent({ page, server, onEvent }) {
         const instances = await call('smallslop_command', { command: JSON.stringify({ op: 'components', request: { op: 'objects.list', runtime: 'page' } }) });
         assert.ok(instances.some(instance => instance.className === 'DiskPane' && instance.status === 'ready'));
       } else if (message === 'hold') {
-        hold = Promise.withResolvers();
-        await hold.promise;
+        await stopped.promise;
         return;
       }
       onEvent({ role: 'assistant', text: `Finished ${message}.` });
     },
-    async interrupt() { hold?.resolve(); },
+    async interrupt() { stopped?.resolve(); },
     dispose() {},
   };
 }
@@ -134,6 +134,8 @@ try {
   await prompt(sessionId, 'system-browser');
   await until(sessionId, `${idle} && smallslop.workspace.world.panes.get('system-browser').object.slots.visible`);
   assert.equal(await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'state'}).className`), 'Inspector');
+  assert.equal(await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'side', value: 'class'}).owner`), 'Inspector class');
+  assert.equal(await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'side', value: 'instance'}).owner`), 'Inspector');
   assert.ok(await evaluate(sessionId, `[...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished system-browser.'))`));
 
   const firstDetails = `smallslop.workspace.world.panes.get('agent').view.body.querySelector('details')`;

@@ -1,13 +1,18 @@
 export class SmallClass {
-  constructor(runtime, name, superclass, slots, category) {
+  constructor(runtime, name, superclass, slots, category, instanceClass = null) {
     this.runtime = runtime;
     this.name = name;
     this.superclass = superclass;
     this.category = category;
     this.slots = Object.freeze([...(superclass?.slots ?? []), ...slots]);
     this.methods = new Map();
+    this.instanceClass = instanceClass;
+    this.metaclass = null;
+    this.slotValues = {};
     if (new Set(this.slots).size !== this.slots.length) throw new Error(`Duplicate slot in ${name}.`);
   }
+
+  get meta() { return this.instanceClass !== null; }
 }
 
 export class SmallObject {

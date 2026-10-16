@@ -115,7 +115,8 @@ export class BrowserService {
   owner() {
     const { className, side } = this.slots;
     if (!className) throw new Error('Select a class.');
-    return this.runtime.classes.get(side === 'class' ? 'Class' : this.className(className));
+    const klass = this.runtime.classes.get(this.className(className));
+    return side === 'class' ? klass.metaclass : klass;
   }
 
   protocol(name) {

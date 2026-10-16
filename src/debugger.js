@@ -188,17 +188,18 @@ export class Debugger {
 
   classes() {
     return [...this.runtime.classes.values()].map(klass => ({ name: klass.name, category: klass.category,
-      superclass: klass.superclass?.name ?? null, slots: [...klass.slots], methodCount: klass.methods.size }))
+      superclass: klass.superclass?.name ?? null, slots: [...klass.slots], classSlots: [...klass.metaclass.slots],
+      methodCount: klass.methods.size, classMethodCount: klass.metaclass.methods.size }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   methods({ className, selector, sends } = {}) {
-    if (className !== undefined && !this.runtime.classes.has(className)) throw new Error(`Unknown class: ${className}.`);
+    if (className !== undefined && !this.runtime.classNamed(className)) throw new Error(`Unknown class: ${className}.`);
     const calls = code => code && (code.boundaries.some(pc => {
       const instruction = decode(code.bytes, pc);
       return [Op.send, Op.superSend].includes(instruction.op) && code.literals[instruction.args[0]] === sends;
     }) || code.literals.some(literal => literal instanceof Code && calls(literal)));
-    return [...this.runtime.classes.values()].filter(klass => className === undefined || klass.name === className)
+    return this.runtime.behaviors().filter(klass => className === undefined || klass.name === className)
       .flatMap(klass => [...klass.methods.values()])
       .filter(method => (selector === undefined || method.selector === selector) && (sends === undefined || calls(method.code)))
       .map(method => ({ id: method.id, className: method.owner.name, selector: method.selector, protocol: method.protocol,
@@ -229,7 +230,7 @@ export class Debugger {
         return this.inspect(id);
       }
       case 'install': {
-        const klass = this.runtime.classes.get(request.className);
+        const klass = this.runtime.classNamed(request.className);
         if (!klass) throw new Error(`Unknown class: ${request.className}.`);
         const method = this.runtime.installSource(klass, request.source, request);
         return this.method(method.id);

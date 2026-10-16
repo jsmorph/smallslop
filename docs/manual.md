@@ -55,7 +55,7 @@ unless described as method definitions.
 | `true`, `false` | `True`, `False` | Boolean |
 | `nil` | `UndefinedObject` | `null` |
 | `[42]` | `Block` | A block with its captured environment |
-| `Object` | `Class` | The class object registered under that name |
+| `Object` | `Object class` | The class registered under that name.  Its class is its metaclass. |
 
 Double quotes delimit comments.  Names use ASCII letters, digits, and
 underscores, with a letter or underscore first.  Local and slot names resolve
@@ -208,10 +208,12 @@ frame and yields when its process exhausts the instruction budget.
 | Receiver | Initial methods |
 | --- | --- |
 | Every object | `yourself`, `class`, `==`, `~~`, `=`, `~=`, `hash`, `identityHash`, `copy`, `isNil`, `notNil`, `isKindOf:`, `isMemberOf:`, `respondsTo:`, `perform:`, `perform:with:` through `perform:with:with:with:`, `perform:withArguments:`, `error:` |
-| Every class | `new`, `name`, `category`, `superclass`, `subclasses`, `allSubclasses`, `allSuperclasses`, `instVarNames`, `allInstVarNames`, `selectors`, `includesSelector:`, `canUnderstand:`, `inheritsFrom:` |
+| Every class | `new`, `basicNew`, `name`, `category`, `superclass`, `subclasses`, `allSubclasses`, `allSuperclasses`, `instVarNames`, `allInstVarNames`, `selectors`, `includesSelector:`, `canUnderstand:`, `inheritsFrom:` |
 | Integer and Float | `+`, `-`, `*`, `<`, `<=`, `>`, `>=`, `negated`, `asFloat`, `asString` |
 | Integer | `quo:`, `rem:`, `asCharacter` |
 | String and Symbol | `asString`, `asSymbol`; `numArgs` on Symbol |
+| Character class | `codePoint:`, `cr`, `lf`, `space`, `tab` (ANSI §5.3.5) |
+| Metaclass | `soleInstance` |
 | Character | `=`, `codePoint`, `value`, `asInteger`, `asCharacter`, `asString`, `asSymbol`, `asUppercase`, `asLowercase`, `isLetter`, `isDigit`, `isAlphaNumeric`, `isUppercase`, `isLowercase`, `isVowel`, `isSeparator` |
 | Float | `/`, `truncated` |
 | Boolean | `not`, `ifTrue:`, `ifFalse:`, `ifTrue:ifFalse:`, `ifFalse:ifTrue:`, `and:`, `or:` |
@@ -278,6 +280,35 @@ console.log(runtime.run(runtime.evaluate('Child new answer')).result);
 The result is `42n`.  `installSource` returns a method object with an ID,
 owner, selector, arity, and compiled `code`.  `lookup(klass, selector)`
 searches the class and its ancestors and returns a method or `null`.
+
+Each class has a metaclass, which holds its class-side methods and class
+instance variables.  `Point class` evaluates to the metaclass, whose name is
+`Point class`.  Metaclasses parallel the class hierarchy: `Point3 class
+superclass` is `Point class`, `Object class superclass` is `Class`, and every
+metaclass is an instance of `Metaclass`.  A message sent to a class looks
+first in its metaclass, then in its superclasses' metaclasses, then in `Class`
+and `Object`, so every class understands `new` and the reflection messages.
+
+```js
+import { Runtime } from './src/index.js';
+
+const runtime = new Runtime();
+const point = runtime.defineClass('Point', { slots: ['x', 'y'], classSlots: ['made'] });
+runtime.installSource(point, 'setX: newX y: newY x := newX. y := newY');
+runtime.installSource(point, 'x ^x');
+runtime.installSource(point.metaclass,
+  'x: newX y: newY made := (made isNil ifTrue: [0] ifFalse: [made]) + 1. ^self new setX: newX y: newY');
+runtime.installSource(point.metaclass, 'made ^made');
+console.log(runtime.run(runtime.evaluate('(Point x: 3 y: 4) x')).result);
+console.log(runtime.run(runtime.evaluate('Point made')).result);
+```
+
+The output is `3n`, followed by `1n`.  `classSlots` names class instance
+variables, which class-side methods read and assign like slots.  Each class
+has its own values, so a subclass starts with its own `nil`.
+`runtime.classNamed('Point class')` returns a metaclass, and
+`runtime.behaviors()` returns every class and metaclass.  `new` sent to a
+metaclass fails, because a metaclass has exactly one instance, its class.
 
 `installSource`, `install`, and `primitive` accept an optional final options
 object with a `protocol` name.  Replacement preserves the current protocol
@@ -551,7 +582,7 @@ handle IDs belong to a debugger adapter.  Their numeric values can overlap.
 | `op` | Request fields beyond `op` | Response |
 | --- | --- | --- |
 | `processes` | None | Array of `{id, status}` records |
-| `classes` | None | Class names, categories, superclasses, slots, and method counts |
+| `classes` | None | Class names, categories, superclasses, slots, class slots, and instance-side and class-side method counts |
 | `methods` | Optional `className`, `selector`, `sends` | Current methods with owner, selector, protocol, implementation form, ID, and available source.  `sends` finds bytecode sends, including nested blocks. |
 | `inspect` | `processId` | Encoded process state |
 | `run`, `resume`, `stepOver`, `stepOut`, `retry` | `processId`, optional `budget` | Encoded process state |
@@ -560,7 +591,7 @@ handle IDs belong to a debugger adapter.  Their numeric values can overlap.
 | `setVariable` | `processId`, `frameId`, `name`, encoded `value`, optional lexical `depth` | Updated process state |
 | `setSendOperand` | `processId`, `frameId`, operand `index`, encoded `value` | Updated process state |
 | `dispose` | `processId` | `{id, status: 'disposed'}` |
-| `install` | `className`, method `source`, optional `protocol`, `expectedMethodId`, `selector` | Installed method description |
+| `install` | `className`, which can name a metaclass such as `Point class`, method `source`, optional `protocol`, `expectedMethodId`, `selector` | Installed method description |
 | `method` | Method `id` | Selector, owner class name, protocol, implementation form, arity, primitive flag, and compiled code records |
 | `breakpoint` | `methodId`, optional `pc` and block `path` | `{id}` |
 | `clearBreakpoint` | Breakpoint `id` | `{cleared: id}` |
@@ -874,8 +905,8 @@ The System Browser selects a category, class, protocol, and method above a
 source editor.  It installs edited methods after checking that the loaded
 version is still current, searches senders and implementors, shows the class
 hierarchy and slots, and sets entry breakpoints.  The Class button shows the
-shared `Class` behavior.  Each browser's selections and draft belong to its
-Smallslop object.
+class side, the methods of the selected class's metaclass.  Each browser's
+selections and draft belong to its Smallslop object.
 
 The Debugger lists the selected runtime's processes and source methods.  It
 inspects, pauses, resumes, steps, retries, and cancels a selected process.  It
@@ -1007,7 +1038,7 @@ process completed and throws an error describing any other outcome.
 | Area | Pending work |
 | --- | --- |
 | Language and library | Collection methods, integer `/`, and fractions |
-| Object model | Per-class metaclasses and instance-layout migration |
+| Object model | Instance-layout migration |
 | Debugger | Source-level stepping and invocation restart |
 | Host access | Constructors, module imports, host symbols, and callbacks requiring synchronous return values |
 | Persistence | Saved interpreter images, saved object graphs, suspended execution, and host-resource reconstruction.  Components save their source and declared state. |

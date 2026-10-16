@@ -155,3 +155,38 @@ test('symbols and characters cross the debugger, component, SQL, and host bounda
   assert.equal(runtime.run(processId).result, 'ab');
   runner.close();
 });
+
+test('each class has a metaclass that holds its class-side methods and variables', () => {
+  const runtime = new Runtime();
+  const point = runtime.defineClass('Point', { slots: ['x', 'y'], classSlots: ['created'] });
+  runtime.installSource(point, 'setX: newX y: newY x := newX. y := newY');
+  runtime.installSource(point, 'x ^x');
+  runtime.installSource(point.metaclass, 'x: newX y: newY created := (created isNil ifTrue: [0] ifFalse: [created]) + 1. ^self new setX: newX y: newY');
+  runtime.installSource(point.metaclass, 'created ^created');
+  assert.equal(run(runtime, '(Point x: 3 y: 4) x'), 3n);
+  assert.equal(run(runtime, 'Point x: 1 y: 2. Point x: 1 y: 2. Point created'), 3n);
+  const point3 = runtime.defineClass('Point3', { superclass: point, slots: ['z'] });
+  runtime.installSource(point3.metaclass, 'x: newX y: newY ^(super x: newX y: newY) setZ');
+  runtime.installSource(point3, 'setZ z := 0');
+  runtime.installSource(point3, 'z ^z');
+  assert.equal(run(runtime, '(Point3 x: 5 y: 6) z'), 0n);
+  assert.equal(run(runtime, 'Point3 created'), 1n, 'class instance variables belong to each class');
+  assert.equal(run(runtime, 'Point created'), 3n);
+  assert.equal(run(runtime, 'Point class'), point.metaclass);
+  assert.equal(run(runtime, 'Point class name'), 'Point class');
+  assert.equal(run(runtime, 'Point class soleInstance'), point);
+  assert.equal(run(runtime, 'Point class class == Metaclass'), true);
+  assert.equal(run(runtime, 'Metaclass class class == Metaclass'), true);
+  assert.equal(run(runtime, 'Point3 class superclass == Point class'), true);
+  assert.equal(run(runtime, 'Object class superclass == Class'), true);
+  assert.deepEqual(run(runtime, 'Point class subclasses'), [point3.metaclass]);
+  assert.throws(() => run(runtime, 'Point class new'), /Point class has one instance, Point/);
+  assert.equal(run(runtime, '(Character codePoint: 65) == $A'), true);
+  assert.equal(run(runtime, 'Character space == $ '), true);
+  assert.equal(run(runtime, 'Character tab codePoint'), 9n);
+  const debugger_ = new Debugger(runtime);
+  const installed = debugger_.dispatch({ op: 'install', className: 'Point class', source: 'origin ^self x: 0 y: 0' });
+  assert.equal(installed.className, 'Point class');
+  assert.deepEqual(debugger_.dispatch({ op: 'methods', className: 'Point class' }).map(method => method.selector), ['created', 'origin', 'x:y:']);
+  assert.equal(debugger_.dispatch({ op: 'classes' }).find(item => item.name === 'Point').classMethodCount, 3);
+});

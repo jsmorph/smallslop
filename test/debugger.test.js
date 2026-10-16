@@ -106,7 +106,7 @@ test('browser metadata and guarded installation preserve method versions', () =>
   const klass = runtime.defineClass('BrowserExample', { category: 'Examples', slots: ['count'] });
   const first = send({ op: 'install', className: klass.name, source: 'answer ^41', protocol: 'accessing', expectedMethodId: null });
   assert.deepEqual(send({ op: 'classes' }).find(item => item.name === klass.name), {
-    name: klass.name, category: 'Examples', superclass: 'Object', slots: ['count'], methodCount: 1,
+    name: klass.name, category: 'Examples', superclass: 'Object', slots: ['count'], classSlots: [], methodCount: 1, classMethodCount: 0,
   });
   const next = send({ op: 'install', className: klass.name, source: 'answer ^42', expectedMethodId: first.id, selector: 'answer' });
   assert.equal(next.protocol, 'accessing');

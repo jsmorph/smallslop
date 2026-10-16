@@ -49,7 +49,6 @@ export function systemBrowserView(widget, body, on, { world, element, perform, c
   });
   results.append(resultHeading, resultList);
 
-  const shared = element('p', 'Class behavior is shared by all classes. Edits apply to Class.', 'browser-shared');
   const editor = element('textarea', undefined, 'browser-source');
   editor.setAttribute('aria-label', 'Browser source');
   editor.spellcheck = false;
@@ -78,7 +77,7 @@ export function systemBrowserView(widget, body, on, { world, element, perform, c
   const status = element('output', undefined, 'browser-status');
   status.setAttribute('aria-label', 'Browser status');
   status.setAttribute('aria-live', 'polite');
-  root.append(panes, actions, results, shared, editor, editing, status);
+  root.append(panes, actions, results, editor, editing, status);
   body.append(root);
 
   const fill = (list, items, selected, placeholder) => {
@@ -111,7 +110,6 @@ export function systemBrowserView(widget, body, on, { world, element, perform, c
     instance.setAttribute('aria-pressed', String(state.side === 'instance'));
     classSide.setAttribute('aria-pressed', String(state.side === 'class'));
     lists.protocol.disabled = lists.method.disabled = instance.disabled = classSide.disabled = !state.className;
-    shared.hidden = state.side !== 'class';
     const ownSlots = state.slots.filter(name => !state.inheritedSlots.includes(name));
     const source = state.methodId || state.creating ? state.source : state.owner
       ? `${state.owner}\n\nSuperclass: ${state.superclass ?? 'none'}\nInstance slots: ${ownSlots.join(' ') || 'none'}\nInherited slots: ${state.inheritedSlots.join(' ') || 'none'}`

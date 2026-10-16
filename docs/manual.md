@@ -181,7 +181,7 @@ For example, `[true ifTrue: [^7]] value. 99` returns Integer `7`.  A block
 attempting that return after its home activation has ended, or from a
 different process, suspends with an error.
 
-### Control flow and library methods
+### Control flow
 
 Conditions and loops use message sends.  A Boolean conditional invokes the
 selected block and returns its result.  A one-branch conditional returns `nil`
@@ -203,36 +203,159 @@ result
 
 `whileTrue:` and `whileFalse:` expect a zero-argument condition block and a
 zero-argument body block.  Their result is `nil`.  The loop reuses its loop
-frame and yields when its process exhausts the instruction budget.
+frame and yields when its process exhausts the instruction budget.  `to:do:`,
+`to:by:do:`, and `timesRepeat:` are ordinary methods written in Smallslop.
 
-| Receiver | Initial methods |
+## Class library
+
+The class library follows the ANSI protocols where ANSI defines them and
+Smalltalk-80 where it does not.  Most of it is Smallslop source in
+[`src/library.js`](../src/library.js), which the System Browser shows and the
+debugger steps through.  A small set of primitives in
+[`src/primitives.js`](../src/primitives.js) and
+[`src/kernel.js`](../src/kernel.js) supplies arithmetic, indexing, string
+operations, and stream buffers.  Primitives cannot send messages, so every
+method that runs a block per element or calls a user's `=` or `hash` is
+Smallslop source.
+
+| Class | Superclass | Representation |
+| --- | --- | --- |
+| `Magnitude` | `Object` | Abstract comparisons from `<` |
+| `Number` | `Magnitude` | Abstract arithmetic, rounding, and intervals |
+| `Integer`, `Float` | `Number` | JavaScript `BigInt` and `Number` |
+| `Fraction` | `Number` | `numerator` and `denominator` Integers, reduced, with a positive denominator |
+| `Character` | `Magnitude` | Interned code point |
+| `Collection`, `SequenceableCollection`, `ArrayedCollection` | | Abstract collection protocols |
+| `Array` | `ArrayedCollection` | JavaScript array |
+| `String`, `Symbol` | `ArrayedCollection`, `String` | JavaScript string, and interned symbol |
+| `OrderedCollection`, `SortedCollection` | `SequenceableCollection`, `OrderedCollection` | JavaScript array in a slot |
+| `Interval` | `SequenceableCollection` | `start`, `stop`, and `step` |
+| `Set`, `Bag`, `Dictionary`, `IdentityDictionary` | `Collection`, `Dictionary` | Hash buckets written in Smallslop |
+| `Association` | `Object` | `key` and `value` |
+| `Stream`, `ReadStream`, `WriteStream` | `Object`, `Stream` | A collection and position, and a primitive buffer |
+
+### Objects and classes
+
+| Receiver | Messages |
 | --- | --- |
-| Every object | `yourself`, `class`, `==`, `~~`, `=`, `~=`, `hash`, `identityHash`, `copy`, `isNil`, `notNil`, `isKindOf:`, `isMemberOf:`, `respondsTo:`, `perform:`, `perform:with:` through `perform:with:with:with:`, `perform:withArguments:`, `error:` |
+| Every object | `yourself`, `class`, `==`, `~~`, `=`, `~=`, `hash`, `identityHash`, `copy`, `isNil`, `notNil`, `isKindOf:`, `isMemberOf:`, `respondsTo:`, `perform:` through `perform:with:with:with:`, `perform:withArguments:`, `error:`, `printOn:`, `printString`, `->`, `subclassResponsibility`, `shouldNotImplement`, and the tests `isString`, `isSymbol`, `isNumber`, `isInteger`, `isFloat`, `isFraction`, `isCharacter`, `isArray`, `isCollection` |
 | Every class | `new`, `basicNew`, `name`, `category`, `superclass`, `subclasses`, `allSubclasses`, `allSuperclasses`, `instVarNames`, `allInstVarNames`, `selectors`, `includesSelector:`, `canUnderstand:`, `inheritsFrom:` |
-| Integer and Float | `+`, `-`, `*`, `<`, `<=`, `>`, `>=`, `negated`, `asFloat`, `asString` |
-| Integer | `quo:`, `rem:`, `asCharacter` |
-| String and Symbol | `asString`, `asSymbol`; `numArgs` on Symbol |
-| Character class | `codePoint:`, `cr`, `lf`, `space`, `tab` (ANSI §5.3.5) |
 | Metaclass | `soleInstance` |
-| Character | `=`, `codePoint`, `value`, `asInteger`, `asCharacter`, `asString`, `asSymbol`, `asUppercase`, `asLowercase`, `isLetter`, `isDigit`, `isAlphaNumeric`, `isUppercase`, `isLowercase`, `isVowel`, `isSeparator` |
-| Float | `/`, `truncated` |
-| Boolean | `not`, `ifTrue:`, `ifFalse:`, `ifTrue:ifFalse:`, `ifFalse:ifTrue:`, `and:`, `or:` |
-| Block | `value`, `value:`, `value:value:`, `value:value:value:`, `value:value:value:value:`, `whileTrue:`, `whileFalse:` |
+| Boolean | `not`, `&`, `|`, `eqv:`, `xor:`, `ifTrue:`, `ifFalse:`, `ifTrue:ifFalse:`, `ifFalse:ifTrue:`, `and:`, `or:` |
+| Block | `value` through `value:value:value:value:`, `valueWithArguments:`, `argumentCount`, `numArgs`, `whileTrue`, `whileFalse`, `whileTrue:`, `whileFalse:` |
 
 The `<Object>` messages follow ANSI §5.3.1, and `name`, `superclass`,
 `subclasses`, `allSubclasses`, and `allSuperclasses` follow ANSI §5.3.8.  The
 other class messages come from Smalltalk-80.  `perform:` and its variants take
-the selector as a String and send it as if the message appeared in source, so
-a missing method suspends at the `perform:` send and `retry` repeats it.
-`copy` returns a shallow copy of an object or array and returns other values
-unchanged.  `error:` suspends the process with an error carrying its text.
-`hash` and `identityHash` return Integers.  Equal Strings, Integers, and
-Floats have equal hashes, and `0.0` and `-0.0` hash alike.
+the selector as a Symbol or String and send it as if the message appeared in
+source, so a missing method suspends at the `perform:` send and `retry`
+repeats it.  `copy` returns a shallow copy of an object, array, or ordered
+collection, and returns other values unchanged.  `error:` suspends the process
+with an error carrying its text.
 
 The initial `=` sends `==`, which uses JavaScript strict equality.  Distinct
-ordinary objects compare by identity.  Primitive values compare by their
-JavaScript value and type, so `1 = 1.0` is false.  User classes can replace
-`=`.
+ordinary objects compare by identity, and Strings, Integers, and Floats
+compare by value and class, so `1 = 1.0` is false.  `hash` and `identityHash`
+return Integers.  Objects that are `=` have equal hashes, and `0.0` and `-0.0`
+hash alike.  A class that replaces `=` must replace `hash` to match, because
+`Set` and `Dictionary` find elements by hash.
+
+### Numbers
+
+| Receiver | Messages |
+| --- | --- |
+| Every number (ANSI §5.6.2) | `+`, `-`, `*`, `/`, `//`, `\\`, `quo:`, `rem:`, `<`, `<=`, `>`, `>=`, `=`, `between:and:`, `max:`, `min:`, `abs`, `negated`, `negative`, `positive`, `strictlyPositive`, `sign`, `isZero`, `even`, `odd`, `squared`, `sqrt`, `reciprocal`, `raisedTo:`, `raisedToInteger:`, `floor`, `ceiling`, `truncated`, `rounded`, `roundTo:`, `truncateTo:`, `integerPart`, `fractionPart`, `asInteger`, `asFloat`, `asFloatD`, `asFloatE`, `asFloatQ`, `asFraction`, `asString`, `printString`, `to:`, `to:by:`, `to:do:`, `to:by:do:` |
+| Integer (ANSI §5.6.5) | `gcd:`, `lcm:`, `factorial`, `bitAnd:`, `bitOr:`, `bitXor:`, `bitShift:`, `bitAt:`, `bitAt:put:`, `highBit`, `allMask:`, `anyMask:`, `noMask:`, `printStringRadix:`, `printOn:base:showRadix:`, `numerator`, `denominator`, `asCharacter`, `timesRepeat:` |
+| Float (ANSI §5.6.7) | `exp`, `ln`, `log:`, `sin`, `cos`, `tan`, `arcSin`, `arcCos`, `arcTan`, `degreesToRadians`, `radiansToDegrees`, `floorLog:`, `isNaN` |
+| Fraction (ANSI §5.6.4) | `numerator`, `denominator`, and class-side `numerator:denominator:` |
+
+Integer `/` returns a `Fraction` reduced to lowest terms, or an Integer when
+the result is whole, as ANSI §5.6.2.4 requires, so `6 / 3` is `2` and `3 / 6`
+prints as `1/2`.  Integers and fractions mix exactly in every operation.  A
+Float operand with an Integer or Fraction is an error, so write `2 asFloat +
+0.5`.  ANSI converts mixed operands implicitly (§5.6.2.4), so this rule
+departs from the standard.  `//` and `\\` floor, `quo:` and `rem:` truncate,
+and division by zero suspends with a `ZeroDivide` error.  `rounded` rounds
+halves away from zero (ANSI §5.6.2.31), and `asInteger` is `rounded`.
+`raisedTo:` with an Integer exponent is exact, including negative exponents,
+which return fractions.  `sqrt` returns a Float.
+
+Floats print with a decimal point and an exponent when JavaScript uses one:
+`2.0`, `0.1`, `1.0e21`, `-0.0`, `NaN`, and `Infinity`.  `printStringRadix: 16`
+prints `16rFF`, and `printOn:base:showRadix:` prints the digits with or
+without the radix prefix.
+
+### Characters, strings, and symbols
+
+| Receiver | Messages |
+| --- | --- |
+| Character (ANSI §5.3.4) | `=`, `<`, `<=`, `>`, `>=`, `codePoint`, `value`, `asInteger`, `asCharacter`, `asString`, `asSymbol`, `asUppercase`, `asLowercase`, `isLetter`, `isDigit`, `isAlphaNumeric`, `isUppercase`, `isLowercase`, `isVowel`, `isSeparator` |
+| Character class (ANSI §5.3.5) | `codePoint:`, `cr`, `lf`, `space`, `tab` |
+| String (ANSI §5.7.10) | `size`, `at:`, `,`, `=`, `<`, `<=`, `>`, `>=`, `sameAs:`, `asUppercase`, `asLowercase`, `asSymbol`, `asString`, `indexOf:`, `copyFrom:to:`, `reverse`, `subStrings:`, `subStrings`, `printString`, and the sequenced collection messages that do not change the receiver |
+| String class | `new`, `new:`, `with:` through `with:with:with:with:`, `withAll:` |
+| Symbol (ANSI §5.7.11) | `asString`, `asSymbol`, `numArgs`, and the String messages |
+
+A String is an immutable JavaScript string, so it conforms to ANSI
+`<readableString>` and has no `at:put:`.  ANSI `<String>` includes `at:put:`
+(§5.7.12), so this is a departure from the standard.  Operations that produce
+text, such as `,`, `copyReplaceAll:with:`, `collect:`, and `reverse`, return
+new strings, and `WriteStream` builds text in pieces.  `at:` returns a
+Character for one UTF-16 code unit, so a character outside the Basic
+Multilingual Plane occupies two positions.  `String new: 3` returns three
+spaces.  `'abc' = #abc` is false, because ANSI `=` for sequences requires the
+same class.  `collect:` on a string must produce Characters.
+
+### Collections
+
+| Receiver | Messages |
+| --- | --- |
+| Every collection (ANSI §5.7.1) | `do:`, `do:separatedBy:`, `size`, `isEmpty`, `notEmpty`, `includes:`, `occurrencesOf:`, `collect:`, `select:`, `reject:`, `detect:`, `detect:ifNone:`, `inject:into:`, `allSatisfy:`, `anySatisfy:`, `asArray`, `asBag`, `asOrderedCollection`, `asSet`, `asSortedCollection`, `asSortedCollection:`, `rehash` |
+| Sequenced collections (ANSI §5.7.8, §5.7.12) | `at:`, `at:ifAbsent:`, `first`, `last`, `after:`, `before:`, `indexOf:`, `indexOf:ifAbsent:`, `indexOfSubCollection:startingAt:`, `findFirst:`, `findLast:`, `,`, `=`, `copyFrom:to:`, `copyWith:`, `copyWithout:`, `copyReplaceAll:with:`, `copyReplaceFrom:to:with:`, `copyReplaceFrom:to:withObject:`, `copyReplacing:withObject:`, `reverse`, `reverseDo:`, `keysAndValuesDo:`, `from:to:do:`, `from:to:keysAndValuesDo:`, `with:do:`, and, where the receiver can change, `at:put:`, `atAll:put:`, `atAllPut:`, `replaceFrom:to:with:`, `replaceFrom:to:with:startingAt:`, `replaceFrom:to:withObject:` |
+| Array class | `new`, `new:`, `with:` through `with:with:with:with:`, `withAll:` |
+| OrderedCollection (ANSI §5.7.18) | `add:`, `addFirst:`, `addLast:`, `add:after:`, `add:before:`, `add:afterIndex:`, `add:beforeIndex:`, `addAll:`, `addAll:after:`, `addAll:before:`, `addAll:afterIndex:`, `addAll:beforeIndex:`, `addAllFirst:`, `addAllLast:`, `remove:`, `remove:ifAbsent:`, `removeAll:`, `removeFirst`, `removeLast`, `removeAtIndex:` |
+| SortedCollection (ANSI §5.7.17) | `add:`, `sortBlock`, `sortBlock:`, and class-side `sortBlock:` |
+| Interval (ANSI §5.7.9) | Class-side `from:to:` and `from:to:by:`; `Number>>to:` and `to:by:` create intervals |
+| Set and Bag (ANSI §5.7.6, §5.7.7) | `add:`, `addAll:`, `remove:`, `remove:ifAbsent:`, `removeAll:`, and `add:withOccurrences:` on Bag |
+| Dictionary (ANSI §5.7.2, §5.7.3) | `at:`, `at:ifAbsent:`, `at:ifAbsentPut:`, `at:put:`, `includesKey:`, `keyAtValue:`, `keyAtValue:ifAbsent:`, `keys`, `values`, `keysAndValuesDo:`, `keysDo:`, `associationsDo:`, `removeKey:`, `removeKey:ifAbsent:`, `removeAllKeys:`, `removeAllKeys:ifAbsent:`, `addAll:`, `collect:`, `select:`, `reject:` |
+| Association | `key`, `value`, `key:`, `value:`, class-side `key:value:` |
+
+`Set`, `Bag`, and `Dictionary` find elements and keys with `=` and `hash`.
+`IdentityDictionary` uses `==` and `identityHash`.  A literal array is frozen,
+and `at:put:` on it is an error; `copy` returns a changeable array.
+`collect:` returns a collection like the receiver, as ANSI §5.7.1.10 requires:
+a String for a string, an Array for an array or interval, a Set for a set, and
+a Dictionary with the same keys for a dictionary.  An interval's elements are
+computed from `start` and `step`, and a step of zero is an error.
+`SortedCollection` rejects `addFirst:`, `addLast:`, and `at:put:`, and
+`select:` keeps its sort block.  `Dictionary keys` returns a Set, and `values`
+returns an Array.
+
+### Streams
+
+| Receiver | Messages |
+| --- | --- |
+| ReadStream (ANSI §5.9.2, §5.9.5) | `next`, `next:`, `peek`, `peekFor:`, `nextMatchFor:`, `nextLine`, `upTo:`, `upToEnd`, `skip:`, `skipTo:`, `atEnd`, `do:`, `contents`, `position`, `position:`, `reset`, `setToEnd`, `isEmpty`, `close`, and class-side `on:` |
+| WriteStream (ANSI §5.9.4, §5.9.6) | `nextPut:`, `nextPutAll:`, `print:`, `cr`, `space`, `tab`, `contents`, `reset`, `flush`, `close`, and class-side `on:` and `with:` |
+
+A WriteStream writes to a String, an Array, or an OrderedCollection.
+`WriteStream on:` starts empty, and `with:` starts with the collection's
+elements, as ANSI §5.9.11 defines.  A String stream accepts Characters in
+`nextPut:` and Strings or Symbols in `nextPutAll:`.  `cr` writes a line feed,
+the end-of-line sequence that ANSI leaves to the implementation.  `ReadStream
+next` past the end is an error, and `peek` there returns `nil`.
+
+### Printing
+
+`printString` writes `printOn:` to a String stream.  Integers print their
+digits, Floats as described above, and Fractions as `3/4`.  Strings print
+quoted with doubled quotes, Symbols as `#name` or `#'two words'`, and
+Characters as `$a`.  `nil`, `true`, and `false` print their names, classes
+print their names, and an Association prints as `key->value`.  An Array prints
+in literal form, `#(1 $a 'b' #c)`.  Another collection prints its class with
+an article, followed by its elements in parentheses, as in `an
+OrderedCollection(1 2 3)`; a Dictionary prints as `Dictionary(#a->1)`, and an
+Interval as `(1 to: 9 by: 2)`.  Other objects print as `a ClassName` or `an
+ClassName`, by the first letter of the class name.
 
 ## Classes and method installation
 
@@ -1037,7 +1160,6 @@ process completed and throws an error describing any other outcome.
 
 | Area | Pending work |
 | --- | --- |
-| Language and library | Collection methods, integer `/`, and fractions |
 | Object model | Instance-layout migration |
 | Debugger | Source-level stepping and invocation restart |
 | Host access | Constructors, module imports, host symbols, and callbacks requiring synchronous return values |

@@ -167,6 +167,6 @@ constructors such as `Array new: 3` need them.
 - [x] 1. Run-time class lookup, the ANSI `<Object>` protocol, and class reflection.
 - [x] 2. Symbols, characters, cascades, literal arrays, and radix integers.
 - [x] 3. Metaclasses.
-- [ ] 4. Strings, collections, streams, `printString`, `to:do:`, and fractions.
+- [x] 4. Strings, collections, streams, `printString`, `to:do:`, and fractions.
 - [ ] 5. The interchange format: file in and file out, class definition in the System Browser, and directory loading in Node.
 - [ ] 6. Exceptions.

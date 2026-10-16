@@ -16,7 +16,7 @@ together with the directories it imports.
 
 | Directory | Contents | Runs in | Imports |
 | --- | --- | --- | --- |
-| [`src/`](src/) | Interpreter, compiler, debugger, host interface, inspectors | Browser, Node | none |
+| [`src/`](src/) | Interpreter, compiler, debugger, class library, host interface, inspectors | Browser, Node | none |
 | [`ui/`](ui/) | Pane workspace, System Browser, Debugger, object inspectors, component panes, session connection | Browser | `src/`, `components/` |
 | [`components/`](components/) | Component runtime, manifests, value encoding, requests | Browser, Node | `src/` |
 | [`server/`](server/) | Server runtime and database, Web server, Pi agent, component service | Node | `src/`, `components/`, and `@earendil-works/pi-coding-agent` in `agent.mjs` and `model-runtime.mjs` |

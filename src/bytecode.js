@@ -1,10 +1,10 @@
 export const Op = Object.freeze({
   constant: 0, self: 1, read: 2, write: 3, slot: 4, storeSlot: 5,
   send: 6, superSend: 7, block: 8, pop: 9, return: 10,
-  nonlocalReturn: 11, jump: 12, jumpFalse: 13,
+  nonlocalReturn: 11, jump: 12, jumpFalse: 13, global: 14,
 });
 
-const operands = Object.freeze([1, 0, 2, 2, 1, 1, 2, 2, 1, 0, 0, 0, 1, 1]);
+const operands = Object.freeze([1, 0, 2, 2, 1, 1, 2, 2, 1, 0, 0, 0, 1, 1, 1]);
 const names = Object.keys(Op);
 
 export function assemble(instructions) {
@@ -75,7 +75,7 @@ export class Code {
     this.boundaries = Object.freeze(boundaries);
     for (const pc of boundaries) {
       const { op, args: values } = decode(this.bytes, pc);
-      if ([Op.constant, Op.slot, Op.storeSlot, Op.send, Op.superSend, Op.block].includes(op)
+      if ([Op.constant, Op.slot, Op.storeSlot, Op.send, Op.superSend, Op.block, Op.global].includes(op)
           && values[0] >= literals.length) throw new Error(`Missing literal at ${pc}.`);
       if ([Op.jump, Op.jumpFalse].includes(op) && !boundaries.includes(values[0])) {
         throw new Error(`Jump at ${pc} targets an invalid instruction.`);
@@ -83,7 +83,7 @@ export class Code {
       if (op === Op.block && !(literals[values[0]] instanceof Code)) {
         throw new Error(`Block at ${pc} needs compiled code.`);
       }
-      if ([Op.send, Op.superSend, Op.slot, Op.storeSlot].includes(op)
+      if ([Op.send, Op.superSend, Op.slot, Op.storeSlot, Op.global].includes(op)
           && typeof literals[values[0]] !== 'string') throw new Error(`Expected a name at ${pc}.`);
     }
     const depths = new Map();
@@ -101,7 +101,7 @@ export class Code {
         : [Op.write, Op.storeSlot, Op.pop, Op.return, Op.nonlocalReturn, Op.jumpFalse].includes(op) ? 1 : 0;
       if (depth < required) throw new Error(`Operand stack underflow at ${pc}.`);
       if ([Op.return, Op.nonlocalReturn].includes(op)) continue;
-      const change = [Op.constant, Op.self, Op.read, Op.slot, Op.block].includes(op) ? 1
+      const change = [Op.constant, Op.self, Op.read, Op.slot, Op.block, Op.global].includes(op) ? 1
         : [Op.pop, Op.jumpFalse].includes(op) ? -1
           : [Op.send, Op.superSend].includes(op) ? -values[1] : 0;
       if (op !== Op.jump) pending.push([next, depth + change]);

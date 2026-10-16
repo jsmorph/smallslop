@@ -55,8 +55,15 @@ unless described as method definitions.
 
 Double quotes delimit comments.  Names use ASCII letters, digits, and
 underscores, with a letter or underscore first.  Local and slot names resolve
-before registered class names.  `self`, `super`, `nil`, `true`, and `false`
-have reserved meanings.
+before class names.  `self`, `super`, `nil`, `true`, and `false` have reserved
+meanings.
+
+The compiler turns any other name that starts with a capital letter, or that
+names an existing class, into a run-time lookup in the runtime's class table.
+A method can therefore name a class that does not exist yet.  If the class is
+still missing when the lookup runs, the process suspends with an
+`UndefinedName` error whose `variable` is the name, and `retry` repeats the
+lookup after the class is defined.  Any other unknown name is a compile error.
 
 Integer arithmetic preserves exact results.  Arithmetic and ordering require
 operands of the same numeric class.  `asFloat` converts an Integer to a Float
@@ -183,13 +190,23 @@ frame and yields when its process exhausts the instruction budget.
 
 | Receiver | Initial methods |
 | --- | --- |
-| Every object | `yourself`, `class`, `==`, `=`, `~=`, `isNil`, `notNil` |
-| Ordinary class | `new` |
+| Every object | `yourself`, `class`, `==`, `~~`, `=`, `~=`, `hash`, `identityHash`, `copy`, `isNil`, `notNil`, `isKindOf:`, `isMemberOf:`, `respondsTo:`, `perform:`, `perform:with:` through `perform:with:with:with:`, `perform:withArguments:`, `error:` |
+| Every class | `new`, `name`, `category`, `superclass`, `subclasses`, `allSubclasses`, `allSuperclasses`, `instVarNames`, `allInstVarNames`, `selectors`, `includesSelector:`, `canUnderstand:`, `inheritsFrom:` |
 | Integer and Float | `+`, `-`, `*`, `<`, `<=`, `>`, `>=`, `negated`, `asFloat`, `asString` |
 | Integer | `quo:`, `rem:` |
 | Float | `/`, `truncated` |
 | Boolean | `not`, `ifTrue:`, `ifFalse:`, `ifTrue:ifFalse:`, `ifFalse:ifTrue:`, `and:`, `or:` |
 | Block | `value`, `value:`, `value:value:`, `value:value:value:`, `value:value:value:value:`, `whileTrue:`, `whileFalse:` |
+
+The `<Object>` messages follow ANSI §5.3.1, and `name`, `superclass`,
+`subclasses`, `allSubclasses`, and `allSuperclasses` follow ANSI §5.3.8.  The
+other class messages come from Smalltalk-80.  `perform:` and its variants take
+the selector as a String and send it as if the message appeared in source, so
+a missing method suspends at the `perform:` send and `retry` repeats it.
+`copy` returns a shallow copy of an object or array and returns other values
+unchanged.  `error:` suspends the process with an error carrying its text.
+`hash` and `identityHash` return Integers.  Equal Strings, Integers, and
+Floats have equal hashes, and `0.0` and `-0.0` hash alike.
 
 The initial `=` sends `==`, which uses JavaScript strict equality.  Distinct
 ordinary objects compare by identity.  Primitive values compare by their
@@ -710,8 +727,8 @@ object handles have a separate lifetime and use `release` or `releaseAll`.
 `compileMethod(klass, source)` returns `{selector, code}` for later
 installation with `runtime.install(klass, selector, code)`.
 `compileExpression(klass, source)` returns a `Code` object for an evaluated
-expression.  Compilation resolves class names against that runtime's class
-registry.
+expression.  A class name compiles to a `global` instruction, which looks the
+class up when it runs.
 
 A `Code` object contains `args`, `locals`, `bytes`, `literals`, `source`,
 `positions`, and instruction `boundaries`.  Code arrays and position records
@@ -752,6 +769,7 @@ returns `{op, name, args, next}`.
 | `nonlocalReturn` | None | Return the stack's top value from the block's home method activation |
 | `jump` | Byte offset or assembler label | Continue at the destination |
 | `jumpFalse` | Byte offset or assembler label | Pop a Boolean and branch when false |
+| `global` | Literal index of a class name | Push the class registered under that name, or suspend with `UndefinedName` |
 
 Lexical depth zero denotes the current environment.  Binding indexes start at
 zero, with arguments followed by locals.  Greater depths select captured

@@ -1,4 +1,76 @@
 import { Code, assemble } from './bytecode.js';
+import { SendCall, SmallClass, SmallObject } from './objects.js';
+
+function selectorName(value) {
+  if (typeof value === 'string' && value) return value;
+  throw new Error('A selector must be a nonempty String.');
+}
+
+function requireClass(value) {
+  if (!(value instanceof SmallClass)) throw new Error('Expected a class.');
+  return value;
+}
+
+function installObjectProtocol(runtime) {
+  const object = runtime.classes.get('Object');
+  const protocol = (klass, selector, arity, invoke, name) => runtime.primitive(klass, selector, arity, invoke, { protocol: name });
+  protocol(object, 'copy', 0, receiver => {
+    if (Array.isArray(receiver)) return [...receiver];
+    if (!(receiver instanceof SmallObject)) return receiver;
+    const copy = new SmallObject(receiver.klass);
+    Object.assign(copy.slots, receiver.slots);
+    return copy;
+  }, 'copying');
+  protocol(object, 'identityHash', 0, receiver => runtime.identityHash(receiver), 'comparing');
+  protocol(object, 'isKindOf:', 1, (receiver, [klass]) => {
+    requireClass(klass);
+    for (let current = runtime.classOf(receiver); current; current = current.superclass) if (current === klass) return true;
+    return false;
+  }, 'testing');
+  protocol(object, 'isMemberOf:', 1, (receiver, [klass]) => runtime.classOf(receiver) === requireClass(klass), 'testing');
+  protocol(object, 'respondsTo:', 1, (receiver, [selector]) => runtime.lookup(runtime.classOf(receiver), selectorName(selector)) !== null, 'testing');
+  protocol(object, 'error:', 1, (_receiver, [text]) => {
+    if (typeof text !== 'string') throw new Error('error: requires a String.');
+    throw new Error(text);
+  }, 'error handling');
+  for (let count = 0; count <= 3; count++) {
+    const selector = `perform:${'with:'.repeat(count)}`;
+    protocol(object, selector, count + 1, (receiver, [name, ...args]) => new SendCall(receiver, selectorName(name), args), 'message handling');
+  }
+  protocol(object, 'perform:withArguments:', 2, (receiver, [name, args]) => {
+    if (!Array.isArray(args)) throw new Error('perform:withArguments: requires an Array of arguments.');
+    return new SendCall(receiver, selectorName(name), [...args]);
+  }, 'message handling');
+
+  const klass = runtime.classes.get('Class');
+  const classes = () => [...runtime.classes.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const subclasses = receiver => classes().filter(candidate => candidate.superclass === receiver);
+  protocol(klass, 'name', 0, receiver => receiver.name, 'accessing');
+  protocol(klass, 'category', 0, receiver => receiver.category, 'accessing');
+  protocol(klass, 'superclass', 0, receiver => receiver.superclass, 'accessing class hierarchy');
+  protocol(klass, 'subclasses', 0, receiver => subclasses(receiver), 'accessing class hierarchy');
+  protocol(klass, 'allSubclasses', 0, receiver => {
+    const result = [];
+    const visit = current => { for (const child of subclasses(current)) { result.push(child); visit(child); } };
+    visit(receiver);
+    return result;
+  }, 'accessing class hierarchy');
+  protocol(klass, 'allSuperclasses', 0, receiver => {
+    const result = [];
+    for (let current = receiver.superclass; current; current = current.superclass) result.push(current);
+    return result;
+  }, 'accessing class hierarchy');
+  protocol(klass, 'instVarNames', 0, receiver => receiver.slots.slice(receiver.superclass?.slots.length ?? 0), 'accessing instance variables');
+  protocol(klass, 'allInstVarNames', 0, receiver => [...receiver.slots], 'accessing instance variables');
+  protocol(klass, 'selectors', 0, receiver => [...receiver.methods.keys()].sort(), 'accessing methods');
+  protocol(klass, 'includesSelector:', 1, (receiver, [selector]) => receiver.methods.has(selectorName(selector)), 'testing methods');
+  protocol(klass, 'canUnderstand:', 1, (receiver, [selector]) => runtime.lookup(receiver, selectorName(selector)) !== null, 'testing methods');
+  protocol(klass, 'inheritsFrom:', 1, (receiver, [other]) => {
+    requireClass(other);
+    for (let current = receiver.superclass; current; current = current.superclass) if (current === other) return true;
+    return false;
+  }, 'testing class hierarchy');
+}
 
 export function installKernel(runtime) {
   const primitives = {
@@ -29,7 +101,8 @@ export function installKernel(runtime) {
     }
   }
   const methods = {
-    Object: ['= other ^self == other', '~= other ^(self = other) not', 'isNil ^false', 'notNil ^true'],
+    Object: ['= other ^self == other', '~= other ^(self = other) not', '~~ other ^(self == other) not',
+      'hash ^self identityHash', 'isNil ^false', 'notNil ^true'],
     UndefinedObject: ['isNil ^true', 'notNil ^false'],
     True: [
       'not ^false', 'ifTrue: block ^block value', 'ifFalse: block ^nil',
@@ -45,9 +118,10 @@ export function installKernel(runtime) {
   };
   for (const [name, sources] of Object.entries(methods)) {
     for (const source of sources) runtime.installSource(runtime.classes.get(name), source, {
-      protocol: ['Object', 'UndefinedObject'].includes(name) ? 'testing' : 'control',
+      protocol: ['Object', 'UndefinedObject'].includes(name) ? (source.startsWith('hash') ? 'comparing' : 'testing') : 'control',
     });
   }
+  installObjectProtocol(runtime);
   runtime.install(runtime.classes.get('Block'), 'whileTrue:', new Code({
     args: ['body'], literals: ['value', null], source: 'whileTrue: body',
     bytes: assemble([

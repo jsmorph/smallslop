@@ -3,25 +3,9 @@ import { compileExpression, compileMethod } from './compiler.js';
 import { installKernel } from './kernel.js';
 import { WeakRegistry } from './weak-registry.js';
 import { HostOperation, HostValue } from './host-value.js';
+import { BlockCall, SendCall, SmallClass, SmallObject } from './objects.js';
 
-export class SmallClass {
-  constructor(runtime, name, superclass, slots, category) {
-    this.runtime = runtime;
-    this.name = name;
-    this.superclass = superclass;
-    this.category = category;
-    this.slots = Object.freeze([...(superclass?.slots ?? []), ...slots]);
-    this.methods = new Map();
-    if (new Set(this.slots).size !== this.slots.length) throw new Error(`Duplicate slot in ${name}.`);
-  }
-}
-
-export class SmallObject {
-  constructor(klass) {
-    this.klass = klass;
-    this.slots = Object.fromEntries(klass.slots.map(name => [name, null]));
-  }
-}
+export { SmallClass, SmallObject };
 
 class Environment {
   constructor(names, values, parent = null) {
@@ -64,13 +48,6 @@ export class Block {
   }
 }
 
-class BlockCall {
-  constructor(block, args) {
-    this.block = block;
-    this.args = args;
-  }
-}
-
 export class Runtime {
   constructor() {
     this.classes = new Map();
@@ -78,6 +55,8 @@ export class Runtime {
     this.processes = new Map();
     this.breakpoints = new Map();
     this.nextId = 1;
+    this.identityHashes = new WeakMap();
+    this.nextIdentityHash = 1;
     this.objectClass = this.defineClass('Object', { superclass: null, category: 'Kernel-Objects' });
     for (const name of ['Class', 'UndefinedObject', 'Boolean', 'Integer', 'Float', 'String', 'Array', 'Block', 'HostObject']) {
       const category = ['Integer', 'Float'].includes(name) ? 'Kernel-Numbers'
@@ -114,6 +93,19 @@ export class Runtime {
       if (this.nativeClasses.has(current)) throw new Error(`${klass.name} requires a native value constructor.`);
     }
     return new SmallObject(klass);
+  }
+
+  identityHash(value) {
+    if (value === null || ['boolean', 'bigint', 'number', 'string'].includes(typeof value)) {
+      const text = `${typeof value}:${Object.is(value, -0) ? 0 : value}`;
+      let hash = 0x811c9dc5;
+      for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+      return BigInt(hash);
+    }
+    this.classOf(value);
+    let hash = this.identityHashes.get(value);
+    if (hash === undefined) this.identityHashes.set(value, hash = BigInt(this.nextIdentityHash++));
+    return hash;
   }
 
   classOf(value) {
@@ -494,38 +486,52 @@ export class Runtime {
         else { need(1); frame.receiver.slots[literal] = stack.at(-1); }
         break;
       case Op.block: stack.push(new Block(frame, literal, args[0])); break;
+      case Op.global: {
+        const klass = this.classes.get(literal);
+        if (!klass) throw Object.assign(new Error(`Undefined name: ${literal}.`), { name: 'UndefinedName', variable: literal });
+        stack.push(klass);
+        break;
+      }
       case Op.pop: need(1); stack.pop(); break;
       case Op.send:
       case Op.superSend: {
         const count = args[1];
         need(count + 1);
-        const receiver = stack[stack.length - count - 1];
-        const arguments_ = stack.slice(stack.length - count);
-        const klass = op === Op.superSend ? frame.method.owner.superclass : this.classOf(receiver);
-        const method = this.lookup(klass, literal);
-        if (!method) {
-          const error = new Error(`${this.classOf(receiver).name} does not understand ${literal}.`);
-          error.name = 'MessageNotUnderstood';
-          error.receiver = receiver;
-          error.selector = literal;
-          error.arguments = arguments_;
-          throw error;
-        }
-        if (count !== method.arity) throw new Error(`${literal} expects ${method.arity} arguments.`);
+        let receiver = stack[stack.length - count - 1];
+        let selector = literal;
+        let arguments_ = stack.slice(stack.length - count);
+        let klass = op === Op.superSend ? frame.method.owner.superclass : this.classOf(receiver);
         let called = null;
         let result;
-        if (method.code) called = this.#frame(process, method, receiver, arguments_, frame);
-        else {
-          result = method.invoke(receiver, arguments_, { processId: process.id, scope: process.scope });
-          if (result instanceof HostOperation) {
-            this.#wait(process, result, next, count);
-            return;
+        for (;;) {
+          const method = this.lookup(klass, selector);
+          if (!method) {
+            const error = new Error(`${this.classOf(receiver).name} does not understand ${selector}.`);
+            error.name = 'MessageNotUnderstood';
+            error.receiver = receiver;
+            error.selector = selector;
+            error.arguments = arguments_;
+            throw error;
           }
-          if (result instanceof BlockCall) {
-            this.classOf(result.block);
-            called = this.#frame(process, result.block.method, result.block.receiver, result.args, frame, result.block);
-          } else this.classOf(result);
+          if (arguments_.length !== method.arity) throw new Error(`${selector} expects ${method.arity} arguments.`);
+          if (method.code) {
+            called = this.#frame(process, method, receiver, arguments_, frame);
+            break;
+          }
+          result = method.invoke(receiver, arguments_, { processId: process.id, scope: process.scope });
+          if (!(result instanceof SendCall)) break;
+          ({ receiver, selector, args: arguments_ } = result);
+          this.classOf(receiver);
+          klass = this.classOf(receiver);
         }
+        if (result instanceof HostOperation) {
+          this.#wait(process, result, next, count);
+          return;
+        }
+        if (result instanceof BlockCall) {
+          this.classOf(result.block);
+          called = this.#frame(process, result.block.method, result.block.receiver, result.args, frame, result.block);
+        } else if (!called) this.classOf(result);
         stack.splice(stack.length - count - 1);
         frame.pc = next;
         if (called) process.frame = called;

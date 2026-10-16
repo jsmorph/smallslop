@@ -234,8 +234,8 @@ class Emitter {
       this.emit(node, writing ? 'storeSlot' : 'slot', this.literal(node.name));
       return;
     }
-    if (!writing && this.klass.runtime.classes.has(node.name)) {
-      this.emit(node, 'constant', this.literal(this.klass.runtime.classes.get(node.name)));
+    if (!writing && (/^[A-Z]/.test(node.name) || this.klass.runtime.classes.has(node.name))) {
+      this.emit(node, 'global', this.literal(node.name));
       return;
     }
     fail(this.source, node.start, `Unknown ${writing ? 'binding' : 'name'} ${node.name}`);

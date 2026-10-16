@@ -8,8 +8,12 @@ export function debuggerView(widget, body, on, { world, element, perform, comman
     realm.disabled = true;
   }
   const refreshButton = element('button', 'Refresh');
+  const stopOnSignal = element('input');
+  stopOnSignal.type = 'checkbox';
+  const stopLabel = element('label', 'Stop on signal');
+  stopLabel.prepend(stopOnSignal);
   const realmRow = element('div', undefined, 'row');
-  realmRow.append(realm, refreshButton);
+  realmRow.append(realm, refreshButton, stopLabel);
   const request = element('textarea');
   request.setAttribute('aria-label', 'JSON command');
   request.value = widget.inspection ? JSON.stringify({ op: 'debug', request: { op: 'inspect', processId: widget.inspection.processId } }) : '{"op":"state"}';
@@ -70,12 +74,15 @@ export function debuggerView(widget, body, on, { world, element, perform, comman
       if (current) methods.value = String(current.id);
       load();
       if (draft !== null) source.value = draft;
-      processOptions(realm.value === 'Server' ? (await world.server({ op: 'state' })).processes : [...world.runtime.processes.values()]);
+      const serverState = realm.value === 'Server' ? await world.server({ op: 'state' }) : null;
+      processOptions(serverState ? serverState.processes : [...world.runtime.processes.values()]);
+      stopOnSignal.checked = serverState ? serverState.stopOnSignal : world.runtime.stopOnSignal;
     } finally { loading = false; }
   };
   on(methods, 'change', load);
   on(realm, 'change', () => perform(() => { entries = []; request.value = '{"op":"state"}'; return reload(); }));
   on(refreshButton, 'click', () => perform(() => reload(true)));
+  on(stopOnSignal, 'change', () => perform(() => run({ op: 'debug', request: { op: 'stopOnSignal', value: stopOnSignal.checked } })));
   on(install, 'click', () => perform(async () => {
     const entry = entries.find(entry => String(entry.id) === methods.value);
     await run({ op: 'debug', request: { op: 'install', className: entry.className, source: source.value, expectedMethodId: entry.id } });
@@ -100,6 +107,7 @@ export function debuggerView(widget, body, on, { world, element, perform, comman
     if (realm.value === 'Server' || loading) return;
     if (world.dispatch({ op: 'methods' }).some((entry, index) => entry.id !== entries[index]?.id)) perform(() => reload(true));
     processOptions([...world.runtime.processes.values()]);
+    stopOnSignal.checked = world.runtime.stopOnSignal;
   };
   return { refresh, render: refresh, async selectProcess(id) {
     realm.value = 'Page';

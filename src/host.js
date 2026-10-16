@@ -188,6 +188,13 @@ export class HostScope {
         const process = this.host.runtime.process(id);
         if (['paused', 'waiting'].includes(process.status)) this.host.runtime.cancel(id);
       } catch (error) { errors.push(error); }
+      try {
+        const process = this.host.runtime.process(id);
+        if (process.status !== 'cancelled' && process.status !== 'completed') {
+          errors.push(new Error(`Process ${id} stopped in a termination block (${process.stop.reason}) and was cancelled without finishing it.`));
+          this.host.runtime.cancel(id, { unwind: false });
+        }
+      } catch (error) { errors.push(error); }
       try { this.host.runtime.dispose(id); } catch (error) { errors.push(error); }
     }
     const finish = () => { if (errors.length) throw new AggregateError(errors, 'Host scope disposal failed.'); };

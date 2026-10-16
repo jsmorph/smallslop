@@ -144,6 +144,7 @@ export class ServerWorld {
       results: [...this.results.values()].map(result => ({ ...this.describe(result), object: this.debugger.value(result) })),
       processes: this.debugger.dispatch({ op: 'processes' }),
       breakpoints: [...this.runtime.breakpoints.keys()],
+      stopOnSignal: this.runtime.stopOnSignal,
     };
   }
 

@@ -3,7 +3,7 @@ import { compileExpression, compileMethod } from './compiler.js';
 import { installKernel } from './kernel.js';
 import { WeakRegistry } from './weak-registry.js';
 import { HostOperation, HostValue } from './host-value.js';
-import { BlockCall, SendCall, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './objects.js';
+import { BlockCall, Pause, SendCall, SmallCharacter, SmallClass, SmallObject, SmallSymbol, Transfer } from './objects.js';
 
 export { SmallCharacter, SmallClass, SmallObject, SmallSymbol };
 
@@ -49,11 +49,14 @@ export class Block {
 }
 
 export class Runtime {
+  static failureLimit = 32;
+
   constructor() {
     this.classes = new Map();
     this.methods = new WeakRegistry();
     this.processes = new Map();
     this.breakpoints = new Map();
+    this.stopOnSignal = false;
     this.nextId = 1;
     this.identityHashes = new WeakMap();
     this.nextIdentityHash = 1;
@@ -433,24 +436,115 @@ export class Runtime {
     return process.wait.completion;
   }
 
-  cancel(id) {
+  cancel(id, { budget = 10000, unwind = true } = {}) {
     const process = this.process(id);
     if (!['paused', 'waiting'].includes(process.status)) throw new Error(`Process ${id} is ${process.status}.`);
+    this.#budget(budget);
     const wait = process.wait;
     process.wait = null;
-    for (const frame of this.frames(id)) if (frame.home.id === frame.id) frame.home.active = false;
-    process.frame = null;
+    process.status = 'paused';
     process.action = null;
-    process.status = 'cancelled';
-    process.stop = { reason: 'cancelled' };
+    let failure = null;
     if (wait) {
       wait.token.runtime = null;
       wait.resolve();
       const cancel = wait.cancel;
       wait.cancel = null;
-      cancel?.();
+      try { cancel?.(); } catch (error) { failure = { error }; }
     }
+    if (!unwind) {
+      for (let frame = process.frame; frame; frame = frame.caller) this.#end(frame);
+      process.frame = null;
+      this.#complete(process, { cancel: true });
+    } else {
+      this.#unwind(process, null, { cancel: true });
+      if (process.status !== 'cancelled') {
+        process.stop = { reason: 'cancelling' };
+        this.#drive(id, budget);
+      }
+    }
+    if (failure) throw failure.error;
     return this.inspect(id);
+  }
+
+  #end(frame) {
+    if (frame.home.id === frame.id) frame.home.active = false;
+  }
+
+  #active(process, frame) {
+    for (let current = process.frame; current !== frame; current = current.caller) {
+      if (!current) throw new Error('The target activation has ended.');
+    }
+  }
+
+  #unwind(process, stop, then) {
+    this.#active(process, stop);
+    for (let frame = process.frame; frame !== stop; frame = frame.caller) {
+      if (!frame.unwindBlock || frame.unwound) continue;
+      frame.unwound = true;
+      for (let current = process.frame; current !== frame.caller; current = current.caller) this.#end(current);
+      const block = frame.unwindBlock;
+      process.frame = this.#frame(process, block.method, block.receiver, [], frame.caller, block);
+      process.frame.continuation = { stop, then };
+      return;
+    }
+    for (let frame = process.frame; frame !== stop; frame = frame.caller) this.#end(frame);
+    process.frame = stop;
+    this.#complete(process, then);
+  }
+
+  #complete(process, then) {
+    if (then.cancel) {
+      process.status = 'cancelled';
+      process.stop = { reason: 'cancelled' };
+      process.action = null;
+    } else if (then.restore) {
+      process.frame.stack.push(...then.restore.operands);
+      process.frame.pc = then.restore.pc;
+      process.status = 'paused';
+      process.stop = then.stop;
+    } else if (then.block) {
+      const frame = this.#frame(process, then.block.method, then.block.receiver, [], process.frame, then.block);
+      process.frame = Object.assign(frame, then.marks);
+    } else if (process.frame) process.frame.stack.push(then.value);
+    else {
+      process.status = 'completed';
+      process.stop = { reason: 'return' };
+      process.result = then.value;
+    }
+  }
+
+  #raise(process, error) {
+    const frame = process.frame;
+    if (!frame || error?.fatal) return false;
+    const klass = this.classes.get(error?.name === 'ZeroDivide' ? 'ZeroDivide' : 'Error');
+    const method = klass && this.lookup(klass, 'signal');
+    if (this.#failures(frame) >= Runtime.failureLimit || !method?.code) return false;
+    const exception = this.newObject(klass);
+    exception.slots.messageText = error instanceof Error ? error.message : String(error);
+    if (error?.name === 'ZeroDivide' && Object.hasOwn(error, 'dividend')) exception.slots.dividend = error.dividend;
+    const { op, args, next } = decode(frame.code.bytes, frame.pc);
+    const sending = op === Op.send || op === Op.superSend;
+    const signal = this.#frame(process, method, exception, [], frame);
+    Object.assign(signal, { sendPc: frame.pc, operands: sending ? frame.stack.splice(frame.stack.length - args[1] - 1) : [],
+      failure: { error, exception }, noResume: !sending });
+    if (sending) frame.pc = next;
+    process.frame = signal;
+    return true;
+  }
+
+  #failures(frame) {
+    let count = 0;
+    for (let current = frame; current; current = current.caller) if (current.failure) count++;
+    return count;
+  }
+
+  #message(selector, args) {
+    const klass = this.classes.get('Message');
+    if (!klass) return null;
+    const message = this.newObject(klass);
+    Object.assign(message.slots, { selector: SmallSymbol.of(selector), arguments: [...args] });
+    return message;
   }
 
   #wait(process, operation, next, count) {
@@ -480,8 +574,11 @@ export class Runtime {
     process.wait = null;
     wait.cancel = null;
     process.status = 'paused';
-    if (failed) process.stop = { reason: 'error', error: value };
-    else {
+    if (failed) {
+      if (this.#raise(process, value)) process.stop = { reason: this.#actionComplete(process) ? 'step' : 'ready' };
+      else process.stop = { reason: 'error', error: value };
+      if (process.stop.reason === 'step') process.action = null;
+    } else {
       const frame = process.frame;
       frame.stack.splice(frame.stack.length - wait.count - 1, wait.count + 1, value);
       frame.pc = wait.next;
@@ -524,9 +621,11 @@ export class Runtime {
       try {
         this.#execute(process);
       } catch (error) {
-        process.status = 'paused';
-        process.stop = { reason: 'error', error };
-        break;
+        if (!this.#raise(process, error)) {
+          process.status = 'paused';
+          process.stop = { reason: 'error', error };
+          break;
+        }
       }
       count++;
       if (process.status === 'running' && this.#actionComplete(process)) break;
@@ -535,7 +634,7 @@ export class Runtime {
       process.status = 'paused';
       process.stop = { reason: this.#actionComplete(process) ? 'step' : 'budget' };
     }
-    if (process.status === 'completed' || process.stop?.reason === 'step') process.action = null;
+    if (['completed', 'cancelled'].includes(process.status) || process.stop?.reason === 'step') process.action = null;
     return this.inspect(id);
   }
 
@@ -583,6 +682,7 @@ export class Runtime {
         let arguments_ = stack.slice(stack.length - count);
         let klass = op === Op.superSend ? frame.method.owner.superclass : this.classOf(receiver);
         let called = null;
+        let failure = null;
         let result;
         for (;;) {
           const method = this.lookup(klass, selector);
@@ -592,14 +692,20 @@ export class Runtime {
             error.receiver = receiver;
             error.selector = selector;
             error.arguments = arguments_;
-            throw error;
+            const message = failure || this.#failures(frame) >= Runtime.failureLimit ? null : this.#message(selector, arguments_);
+            if (!message) throw Object.assign(error, { fatal: true });
+            failure = { error };
+            selector = 'doesNotUnderstand:';
+            arguments_ = [message];
+            klass = this.classOf(receiver);
+            continue;
           }
           if (arguments_.length !== method.arity) throw new Error(`${selector} expects ${method.arity} arguments.`);
           if (method.code) {
             called = this.#frame(process, method, receiver, arguments_, frame);
             break;
           }
-          result = method.invoke(receiver, arguments_, { processId: process.id, scope: process.scope });
+          result = method.invoke(receiver, arguments_, { processId: process.id, scope: process.scope, process });
           if (!(result instanceof SendCall)) break;
           ({ receiver, selector, args: arguments_ } = result);
           this.classOf(receiver);
@@ -609,36 +715,49 @@ export class Runtime {
           this.#wait(process, result, next, count);
           return;
         }
+        if (result instanceof Transfer) this.#active(process, result.stop);
         if (result instanceof BlockCall) {
           this.classOf(result.block);
           called = this.#frame(process, result.block.method, result.block.receiver, result.args, frame, result.block);
-        } else if (!called) this.classOf(result);
-        stack.splice(stack.length - count - 1);
+          if (result.marks) Object.assign(called, result.marks);
+        } else if (result instanceof Pause) this.classOf(result.value);
+        else if (!called && !(result instanceof Transfer)) this.classOf(result);
+        const operands = stack.splice(stack.length - count - 1);
+        const sendPc = frame.pc;
         frame.pc = next;
-        if (called) process.frame = called;
-        else stack.push(result);
+        if (called) {
+          Object.assign(called, { sendPc, operands });
+          if (failure) called.failure = failure;
+          process.frame = called;
+        } else if (result instanceof Transfer) this.#unwind(process, result.stop, result.then);
+        else if (result instanceof Pause) {
+          stack.push(result.value);
+          process.status = 'paused';
+          process.stop = result.stop;
+        } else stack.push(result);
         return;
       }
       case Op.return:
       case Op.nonlocalReturn: {
         need(1);
-        let target = frame;
+        const result = stack.at(-1);
         if (op === Op.nonlocalReturn) {
           if (!frame.home.active || frame.home.processId !== process.id) throw new Error('The block home activation has ended or belongs to another process.');
+          let target = frame;
           while (target && target.id !== frame.home.id) target = target.caller;
           if (!target) throw new Error('The block home activation is outside this call chain.');
+          this.#unwind(process, target.caller, { value: result });
+          return;
         }
-        const result = stack.at(-1);
-        for (let current = frame; current !== target.caller; current = current.caller) {
-          if (current.home.id === current.id) current.home.active = false;
+        if (frame.noResume) throw Object.assign(new Error('The failed instruction cannot continue after its exception returns.'), { fatal: true });
+        if (frame.handlerFor) {
+          this.#unwind(process, frame.handlerFor.caller, { value: result });
+          return;
         }
-        process.frame = target.caller;
-        if (process.frame) process.frame.stack.push(result);
-        else {
-          process.status = 'completed';
-          process.stop = { reason: 'return' };
-          process.result = result;
-        }
+        this.#end(frame);
+        process.frame = frame.caller;
+        if (frame.continuation) this.#unwind(process, frame.continuation.stop, frame.continuation.then);
+        else this.#complete(process, { value: result });
         return;
       }
       case Op.jump: frame.pc = args[0]; return;

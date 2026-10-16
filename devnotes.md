@@ -169,7 +169,7 @@ constructors such as `Array new: 3` need them.
 - [x] 3. Metaclasses.
 - [x] 4. Strings, collections, streams, `printString`, `to:do:`, and fractions.
 - [x] 5. The interchange format: file in and file out, class definition in the System Browser, and directory loading in Node.
-- [ ] 6. Exceptions.
+- [x] 6. Exceptions.
 
 ### Step 5 notes
 
@@ -190,3 +190,41 @@ load or save source directories, because the place where page classes persist
 needs a decision.  The Chromium workspace test checks File out with
 `Browser.setDownloadBehavior` and File in with `DOM.setFileInputFiles`
 ([Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)).
+
+### Step 6 notes
+
+The exception classes and the handler search are Smallslop source in
+`src/exceptions.js`, so the System Browser shows them and the debugger steps
+through them.  Interpreter primitives supply what Smallslop cannot express
+without contexts: recording the signal frame, finding the next handler frame,
+evaluating a handler block above the signal, and transferring control to a
+frame with unwinding.  The search follows ANSI 5.5.2.1 rather than Squeak: a
+handler block's frame names its handler environment, the caller of its
+`on:do:`, and the search skips to that frame, so a signal inside a handler
+reaches only the handlers outside that `on:do:`.
+
+Resumption returns a value as the result of the pending send in the `signal`
+frame.  The first version ran the search loop in a block, so `resume:`
+returned into the loop instead of from `signal`.  `signal`, `pass`, and
+`outer` now call `privateSearchFrom:ifNone:` as a direct send.  `outer` records
+its own frame as the resumption target before the search.
+
+Unwinding is one interpreter operation with a completion: push a value, start
+a block, restore a failed instruction and pause, or finish cancellation.  A
+frame created by `ifCurtailed:` carries its termination block.  Unwinding
+runs that block as a frame whose return continues the unwinding, so
+termination blocks can send messages, fail, and stop at breakpoints.
+`ensure:` is `ifCurtailed:` followed by the termination block.
+
+An unhandled `Error` pauses at the failed instruction, as errors did before
+step 6, so `retry` and the repair flow keep working.  The walk from the
+signal frame passes frames of exception-class methods and frames created for
+a failure, then restores the send below them.  When a non-resumable
+exception's default action returns, the signal returns its value, as Squeak's
+`UndefinedObject>>handleSignal:` does with `resumeUnchecked:`.  A bound of 32
+active failure signals stops recursion when an exception method fails.
+
+Cancellation now runs termination blocks within a budget.  Host scope
+disposal reports a process whose termination blocks did not finish, then
+discards it with `cancel(id, {unwind: false})`.
+

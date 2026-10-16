@@ -175,12 +175,22 @@ try {
   assert.equal(await evaluate(sessionId, `${firstDetails}.open`), true);
   await evaluate(sessionId, `smallslop.command({op: 'open', id: 'debugger'}) && null`);
   assert.deepEqual(await evaluate(sessionId, `[...smallslop.workspace.world.panes.get('debugger').view.body.querySelector('select').options].map(option => option.value)`), ['Page', 'Server']);
+  const stopOnSignal = `smallslop.workspace.world.panes.get('debugger').view.body.querySelector('input[type=checkbox]')`;
+  await evaluate(sessionId, `${stopOnSignal}.click()`);
+  await until(sessionId, `smallslop.workspace.world.runtime.stopOnSignal === true`);
+  await evaluate(sessionId, `${stopOnSignal}.click()`);
+  await until(sessionId, `smallslop.workspace.world.runtime.stopOnSignal === false`);
   await evaluate(sessionId, `(() => {
     const realm = smallslop.workspace.world.panes.get('debugger').view.body.querySelector('select');
     realm.value = 'Server';
     realm.dispatchEvent(new Event('change'));
   })()`);
   await until(sessionId, `[...smallslop.workspace.world.panes.get('debugger').view.body.querySelectorAll('option')].some(option => option.textContent === 'Database execute:parameters:')`);
+  await evaluate(sessionId, `${stopOnSignal}.click()`);
+  await until(sessionId, `smallslop.connection.server({op: 'state'}).then(state => state.stopOnSignal === true)`);
+  assert.equal(await evaluate(sessionId, `smallslop.workspace.world.runtime.stopOnSignal`), false);
+  await evaluate(sessionId, `${stopOnSignal}.click()`);
+  await until(sessionId, `smallslop.connection.server({op: 'state'}).then(state => state.stopOnSignal === false)`);
 
   await until(sessionId, `smallslop.components?.identity.namespace === 'test'`);
   await evaluate(sessionId, `document.querySelector('#disk-example').click()`);
@@ -240,7 +250,7 @@ try {
   await until(sessionId, `globalThis.smallslop && ${idle}`);
   assert.equal(await evaluate(sessionId, `smallslop.workspace.world.panes.get('system-browser').object.slots.x`), 300);
   assert.ok(calls.some(call => call.name === 'smallslop_server'));
-  console.log('Chromium passed the workspace agent, page command, class definition, file in and out, server database, component, reconnect, interrupt, reset, and arrangement tests.');
+  console.log('Chromium passed the workspace agent, page command, class definition, file in and out, stop on signal, server database, component, reconnect, interrupt, reset, and arrangement tests.');
 } finally {
   const exit = browser?.exitCode === null ? new Promise(resolve => browser.once('exit', resolve)) : Promise.resolve();
   if (cdp) { await cdp.send('Browser.close'); await cdp.close(); }

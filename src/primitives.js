@@ -1,7 +1,7 @@
 import { BlockCall, SendCall, SmallCharacter, SmallObject, SmallSymbol } from './objects.js';
 
-function fail(message, name = 'Error') {
-  throw Object.assign(new Error(message), { name });
+function fail(message, name = 'Error', details = {}) {
+  throw Object.assign(new Error(message), { name }, details);
 }
 
 function index(value, size) {
@@ -48,7 +48,7 @@ export function installPrimitives(runtime) {
   const fractionClass = get('Fraction');
   const isFraction = value => value instanceof SmallObject && value.klass === fractionClass;
   const fraction = (numerator, denominator) => {
-    if (denominator === 0n) fail('Division by zero.', 'ZeroDivide');
+    if (denominator === 0n) fail('Division by zero.', 'ZeroDivide', { dividend: numerator });
     if (denominator < 0n) { numerator = -numerator; denominator = -denominator; }
     const divisor = gcd(numerator, denominator);
     numerator /= divisor;
@@ -73,14 +73,14 @@ export function installPrimitives(runtime) {
   for (const [selector, operation] of [['+', (a, b) => a + b], ['-', (a, b) => a - b], ['*', (a, b) => a * b]]) exact(selector, operation, 'arithmetic');
   for (const [selector, operation] of [['<', (a, b) => a < b], ['<=', (a, b) => a <= b], ['>', (a, b) => a > b], ['>=', (a, b) => a >= b]]) exact(selector, operation, 'comparing');
   exact('/', (a, b) => fraction(a, b), 'arithmetic');
-  exact('//', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide') : floorDivide(a, b), 'arithmetic');
-  exact('\\\\', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide') : floorModulo(a, b), 'arithmetic');
+  exact('//', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide', { dividend: a }) : floorDivide(a, b), 'arithmetic');
+  exact('\\\\', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide', { dividend: a }) : floorModulo(a, b), 'arithmetic');
   const integers = (selector, operation, protocol) => define(integer, selector, 1, (receiver, [argument]) => {
     if (typeof argument !== 'bigint') fail(`Integer ${selector} requires an Integer.`);
     return operation(receiver, argument);
   }, protocol);
-  integers('quo:', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide') : a / b, 'arithmetic');
-  integers('rem:', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide') : a % b, 'arithmetic');
+  integers('quo:', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide', { dividend: a }) : a / b, 'arithmetic');
+  integers('rem:', (a, b) => b === 0n ? fail('Division by zero.', 'ZeroDivide', { dividend: a }) : a % b, 'arithmetic');
   integers('gcd:', gcd, 'arithmetic');
   integers('bitAnd:', (a, b) => a & b, 'bit manipulation');
   integers('bitOr:', (a, b) => a | b, 'bit manipulation');

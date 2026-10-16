@@ -147,14 +147,15 @@ export class Debugger {
     if (stop?.reason === 'error') {
       const error = stop.error;
       const detail = { name: error?.name ?? 'ThrownValue', message: error?.message ?? String(error) };
-      if (error?.name === 'MessageNotUnderstood') {
+      if (error && Object.hasOwn(error, 'selector') && Array.isArray(error.arguments)) {
         Object.assign(detail, {
           receiver: this.value(error.receiver), selector: error.selector,
           arguments: error.arguments.map(value => this.value(value)),
         });
       }
-      stop = { reason: 'error', error: detail };
+      stop = { ...stop, error: detail };
     }
+    if (stop?.exception !== undefined) stop = { ...stop, exception: this.value(stop.exception) };
     return {
       ...state, stop, result: this.value(state.result),
       frames: state.frames.map(frame => ({
@@ -245,6 +246,10 @@ export class Debugger {
         }
         return { id: this.runtime.breakpoint(method, request.pc ?? 0, code) };
       }
+      case 'stopOnSignal':
+        if (typeof request.value !== 'boolean') throw new Error('stopOnSignal requires a Boolean value.');
+        this.runtime.stopOnSignal = request.value;
+        return { stopOnSignal: request.value };
       case 'clearBreakpoint': this.runtime.clearBreakpoint(request.id); return { cleared: request.id };
       case 'setVariable':
         this.runtime.setVariable(processId, request.frameId, request.name, this.decode(request.value), { depth: request.depth });

@@ -89,7 +89,8 @@ test('asynchronous rejection retains the send and retry starts a new call', asyn
   const first = runtime.whenReady(id);
   requests[0].reject(new Error('Host request failed'));
   await first;
-  state = runtime.inspect(id);
+  assert.equal(runtime.inspect(id).stop.reason, 'ready');
+  state = runtime.resume(id);
   assert.equal(state.stop.reason, 'error');
   assert.equal(state.frames[0].pendingSend.receiver, service);
   assert.equal(object.slots.effects, 1n);

@@ -2,6 +2,7 @@ import { Code, assemble } from './bytecode.js';
 import { SendCall, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './objects.js';
 import { installPrimitives } from './primitives.js';
 import { libraryClasses, librarySource } from './library.js';
+import { exceptionClasses, exceptionSource, installExceptionPrimitives } from './exceptions.js';
 
 function selectorName(value) {
   if (value instanceof SmallSymbol && value.name) return value.name;
@@ -76,10 +77,6 @@ function installObjectProtocol(runtime) {
   }, 'testing');
   protocol(object, 'isMemberOf:', 1, (receiver, [klass]) => runtime.classOf(receiver) === requireClass(klass), 'testing');
   protocol(object, 'respondsTo:', 1, (receiver, [selector]) => runtime.lookup(runtime.classOf(receiver), selectorName(selector)) !== null, 'testing');
-  protocol(object, 'error:', 1, (_receiver, [text]) => {
-    if (typeof text !== 'string') throw new Error('error: requires a String.');
-    throw new Error(text);
-  }, 'error handling');
   for (let count = 0; count <= 3; count++) {
     const selector = `perform:${'with:'.repeat(count)}`;
     protocol(object, selector, count + 1, (receiver, [name, ...args]) => new SendCall(receiver, selectorName(name), args), 'message handling');
@@ -174,11 +171,17 @@ export function installKernel(runtime) {
   for (const [name, superclass, slots, category] of libraryClasses) {
     runtime.defineClass(name, { superclass: runtime.classes.get(superclass), slots, category });
   }
+  for (const [name, superclass, slots] of exceptionClasses) {
+    runtime.defineClass(name, { superclass: runtime.classes.get(superclass), slots, category: 'Kernel-Exceptions' });
+  }
   installPrimitives(runtime);
-  for (const [className, protocols] of Object.entries(librarySource)) {
-    const klass = runtime.classNamed(className);
-    for (const [protocol, sources] of Object.entries(protocols)) {
-      for (const source of sources) runtime.installSource(klass, source, { protocol });
+  installExceptionPrimitives(runtime);
+  for (const source of [librarySource, exceptionSource]) {
+    for (const [className, protocols] of Object.entries(source)) {
+      const klass = runtime.classNamed(className);
+      for (const [protocol, sources] of Object.entries(protocols)) {
+        for (const text of sources) runtime.installSource(klass, text, { protocol });
+      }
     }
   }
   runtime.install(runtime.classes.get('Block'), 'whileTrue:', new Code({

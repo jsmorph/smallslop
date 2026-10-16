@@ -140,8 +140,9 @@ page's browser runtime.
 Each session has a [`ServerWorld`](manual.md#server-runtime), a Smallslop
 runtime whose `Database` object runs SQL in a separate process.  The agent's
 `smallslop_server` tool and the page's server requests accept the same
-commands.  SQL results stay in server memory until closed, and a failed SQL
-send pauses with its frames retained for repair and retry.
+commands.  SQL results stay in server memory until closed.  A failed SQL send
+signals an `Error`, and an unhandled one pauses with its frames retained for
+repair and retry.
 
 | Command | Arguments | Effect |
 | --- | --- | --- |

@@ -23,9 +23,24 @@ export class SmallObject {
 }
 
 export class BlockCall {
-  constructor(block, args) {
+  constructor(block, args, marks = null) {
     this.block = block;
     this.args = args;
+    this.marks = marks;
+  }
+}
+
+export class Transfer {
+  constructor(stop, then) {
+    this.stop = stop;
+    this.then = then;
+  }
+}
+
+export class Pause {
+  constructor(stop, value) {
+    this.stop = stop;
+    this.value = value;
   }
 }
 

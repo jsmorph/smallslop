@@ -233,12 +233,13 @@ Smallslop source.
 | `Set`, `Bag`, `Dictionary`, `IdentityDictionary` | `Collection`, `Dictionary` | Hash buckets written in Smallslop |
 | `Association` | `Object` | `key` and `value` |
 | `Stream`, `ReadStream`, `WriteStream` | `Object`, `Stream` | A collection and position, and a primitive buffer |
+| `Exception` and its subclasses, `ExceptionSet`, `Message` | `Object` | Smallslop source in [`src/exceptions.js`](../src/exceptions.js) with interpreter primitives (see [Exceptions](#exceptions)) |
 
 ### Objects and classes
 
 | Receiver | Messages |
 | --- | --- |
-| Every object | `yourself`, `class`, `==`, `~~`, `=`, `~=`, `hash`, `identityHash`, `copy`, `isNil`, `notNil`, `isKindOf:`, `isMemberOf:`, `respondsTo:`, `perform:` through `perform:with:with:with:`, `perform:withArguments:`, `error:`, `printOn:`, `printString`, `->`, `subclassResponsibility`, `shouldNotImplement`, and the tests `isString`, `isSymbol`, `isNumber`, `isInteger`, `isFloat`, `isFraction`, `isCharacter`, `isArray`, `isCollection` |
+| Every object | `yourself`, `class`, `==`, `~~`, `=`, `~=`, `hash`, `identityHash`, `copy`, `isNil`, `notNil`, `isKindOf:`, `isMemberOf:`, `respondsTo:`, `perform:` through `perform:with:with:with:`, `perform:withArguments:`, `error:`, `doesNotUnderstand:`, `printOn:`, `printString`, `->`, `subclassResponsibility`, `shouldNotImplement`, and the tests `isString`, `isSymbol`, `isNumber`, `isInteger`, `isFloat`, `isFraction`, `isCharacter`, `isArray`, `isCollection` |
 | Every class | `new`, `basicNew`, `name`, `category`, `superclass`, `subclasses`, `allSubclasses`, `allSuperclasses`, `instVarNames`, `allInstVarNames`, `selectors`, `includesSelector:`, `canUnderstand:`, `inheritsFrom:` |
 | Metaclass | `soleInstance` |
 | Boolean | `not`, `&`, `|`, `eqv:`, `xor:`, `ifTrue:`, `ifFalse:`, `ifTrue:ifFalse:`, `ifFalse:ifTrue:`, `and:`, `or:` |
@@ -250,8 +251,9 @@ other class messages come from Smalltalk-80.  `perform:` and its variants take
 the selector as a Symbol or String and send it as if the message appeared in
 source, so a missing method suspends at the `perform:` send and `retry`
 repeats it.  `copy` returns a shallow copy of an object, array, or ordered
-collection, and returns other values unchanged.  `error:` suspends the process
-with an error carrying its text.
+collection, and returns other values unchanged.  `error:` signals an `Error`
+with its argument as the message text, and `doesNotUnderstand:` signals
+`MessageNotUnderstood` (see [Exceptions](#exceptions)).
 
 The initial `=` sends `==`, which uses JavaScript strict equality.  Distinct
 ordinary objects compare by identity, and Strings, Integers, and Floats
@@ -528,6 +530,95 @@ file order, then installs the methods of every file.  Each failure record
 names its file.  `writeClassFile(klass, directory)` writes `fileOut(klass)` to
 `ClassName.st`, replacing an existing file in one rename.
 
+## Exceptions
+
+Smallslop implements the exception protocols of ANSI section 5.5.  `[...]
+on: selector do: [:exception | ...]` evaluates the receiver block with a
+handler.  The selector is an exception class, which handles its instances and
+its subclasses' instances, or an `ExceptionSet` built with `,`.  The handler
+block takes one argument, as ANSI requires.  When the handler block returns,
+its value becomes the value of `on:do:`.
+
+```smalltalk
+[10 / 0] on: ZeroDivide do: [:e | e return: e dividend]
+[(Warning signal: 'low') + 1] on: Warning do: [:e | e resume: 1]
+[Error signal: 'first'] on: ZeroDivide, Error do: [:e | e messageText]
+```
+
+The results are `10`, `2`, and `'first'`.
+
+| Class | Superclass | Resumable | Unhandled |
+| --- | --- | --- | --- |
+| `Exception` | `Object` | Yes | Pauses the process at the failed instruction |
+| `Error` | `Exception` | No | Pauses the process at the failed instruction |
+| `ZeroDivide` | `Error` | Yes | Pauses the process at the failed instruction |
+| `MessageNotUnderstood` | `Error` | Yes | Pauses the process at the failed send |
+| `Notification` | `Exception` | Yes | The signal returns `nil` |
+| `Warning` | `Notification` | Yes | Pauses the process.  `resume` returns `nil` from the signal. |
+
+| Message | Effect |
+| --- | --- |
+| `signal`, `signal:` | Signal the exception, optionally with message text.  Exception classes understand both. |
+| `messageText`, `description`, `tag` | The signaler's text or `nil`, a description that defaults to the class name, and the tag or the text |
+| `return:`, `return` | Return a value, or `nil`, from the handler's `on:do:` |
+| `retry`, `retryUsing:` | Evaluate the protected block, or a replacement block, again under the same handler |
+| `resume:`, `resume` | Return a value, or `nil`, from the signal, or from `outer` when the handler was reached through `outer`.  Requires a resumable exception. |
+| `pass` | Give the exception to the enclosing handler, or to the default action |
+| `outer` | Evaluate the enclosing handler or the default action, and return its resumption value |
+| `resignalAs:` | Signal a replacement exception from the original signal point |
+| `isNested` | Answer whether an enclosing handler handles the exception |
+
+A handler block runs above the signaling frames, so `resume:` can return to
+the signal point.  An exception signaled inside a handler block reaches only
+the handlers that enclose that handler's `on:do:`.  The default action runs in
+the exception environment of the signal.  `ensure:` evaluates its argument
+after the receiver block returns, after a non-local return leaves it, and
+after a handler's return, retry, or resignal, or a process cancellation, ends
+it.  `ifCurtailed:` evaluates its argument only when the receiver block ends
+without returning.  Termination blocks run innermost first, after the handler
+that ended their blocks.
+
+Interpreter and primitive failures signal exceptions.  A missing method sends
+`doesNotUnderstand:` with a `Message` that holds the selector and arguments,
+and `Object>>doesNotUnderstand:` signals `MessageNotUnderstood`.  Its
+resumption value becomes the value of the failed send.  Integer division by
+zero signals `ZeroDivide` with the dividend.  Other primitive failures,
+undefined global names, unknown slots, and rejected host operations signal
+`Error` with the failure's text as `messageText`.
+
+An unhandled `Error` pauses the process with `stop.reason` `'error'`.  The
+runtime unwinds the signal and handler frames, running their termination
+blocks, and restores the failed instruction with its operands.  For an
+explicit signal, the failed instruction is the send that entered the
+exception classes' methods, such as `Error signal: 'x'` in user code or the
+`signal:` send inside `Object>>error:`.  `stop.error` holds the original
+JavaScript failure or an `Error` named after the exception class, and
+`stop.exception` holds the exception.  `retry` executes the instruction again.
+An unhandled `Warning` pauses with `stop.reason` `'warning'` and
+`stop.message`.  `resume` continues with `nil` as the value of the signal, and
+`cancel` ends the process.
+
+`runtime.stopOnSignal = true`, the `stopOnSignal` debugger request, and the
+Debugger pane's Stop on signal checkbox pause every signal before its handler
+search, with `stop.reason` `'signal'`.  `resume` continues the search.
+
+`cancel(id, {budget, unwind})` runs the process's pending termination blocks
+within the budget.  When a termination block stops at an error, breakpoint,
+wait, or the budget, the process keeps that state, and cancellation finishes
+when the termination blocks finish.  Another `cancel` continues with the
+remaining termination blocks.  Each termination block runs at most once.
+`unwind: false` discards the frames without running termination blocks.
+Host scope disposal does so after it reports a process whose termination
+blocks did not finish.
+
+Smallslop resolves several cases that ANSI leaves to the implementation.  A
+signal sent to an exception that is already signaled starts a new signal.
+When the default action of a non-resumable exception returns, the signal
+returns its value.  A failure in an instruction other than a send cannot
+resume, so a return from its signal pauses the process with an error.  A
+failure while 32 failure signals are active pauses the process at that
+failure without signaling, which stops recursion in faulty exception methods.
+
 ## Processes and the debugger
 
 ### Process state and execution
@@ -559,7 +650,10 @@ holds the return value when `status` is `completed`.
 | `pause` | An explicit pause stopped further scheduled execution |
 | `await` | A host call is waiting for completion |
 | `ready` | A host call completed, and execution can resume |
-| `error` | An instruction failed.  `stop.error` holds the failure |
+| `error` | An instruction failed without signaling, or an unhandled `Error` restored its failed instruction.  `stop.error` holds the failure, and `stop.exception` holds a signaled exception. |
+| `warning` | An unhandled `Warning` paused the process.  `stop.message` holds its description. |
+| `signal` | Stop on signal paused before a handler search.  `stop.exception` holds the exception. |
+| `cancelling` | Cancellation is running termination blocks |
 | `return` | The process completed |
 | `cancelled` | The process was cancelled |
 
@@ -630,7 +724,7 @@ preserving the identity of their object values.
 | `setVariable(id, frameId, name, value, {depth})` | Change a binding in a selected lexical scope.  Omit depth to select the nearest binding with that name |
 | `setSendOperand(id, frameId, index, value)` | Edit a prepared send in the current frame.  Index 0 selects the receiver, and 1 selects the first argument |
 | `retry(id, {budget})` | Retry a failed instruction and continue |
-| `cancel(id)` | Cancel a paused or waiting process |
+| `cancel(id, {budget, unwind})` | Cancel a paused or waiting process after running its termination blocks |
 | `pause(id)` | Pause between execution batches while preserving the stepping target |
 | `dispose(id)` | Remove a completed or cancelled process record |
 
@@ -687,12 +781,13 @@ can shadow the paused frame's bindings.
 Syntax and name-resolution errors throw `SyntaxError` with `position`, `line`,
 and `column`.  The position is a zero-based JavaScript string offset.  Line
 and column numbers start at one.  Invalid debugger operations throw to their
-JavaScript caller.  Execution errors suspend the process with `stop.reason ===
-'error'`.
+JavaScript caller.  An unhandled execution error suspends the process with
+`stop.reason === 'error'`.
 
-A missing method produces `MessageNotUnderstood` with `receiver`, `selector`,
-and `arguments`.  The failed send preserves its instruction position and
-operands.  The debugger can install a method and retry from that position:
+An unhandled `MessageNotUnderstood` gives `stop.error` the name
+`MessageNotUnderstood` with `receiver`, `selector`, and `arguments`.  The
+failed send keeps its instruction position and operands.  The debugger can
+install a method and retry from that position:
 
 ```js
 import { createRepairDemo } from './examples/repair.js';
@@ -786,7 +881,9 @@ handle IDs belong to a debugger adapter.  Their numeric values can overlap.
 | `methods` | Optional `className`, `selector`, `sends` | Current methods with owner, selector, protocol, implementation form, ID, and available source.  `sends` finds bytecode sends, including nested blocks. |
 | `inspect` | `processId` | Encoded process state |
 | `run`, `resume`, `stepOver`, `stepOut`, `retry` | `processId`, optional `budget` | Encoded process state |
-| `step`, `pause`, `cancel` | `processId` | Encoded process state |
+| `step`, `pause` | `processId` | Encoded process state |
+| `cancel` | `processId`, optional `budget` | Encoded process state |
+| `stopOnSignal` | Boolean `value` | `{stopOnSignal}` |
 | `evaluate` | `source`, optional `processId`, `frameId`, or encoded `receiver` | New paused process state |
 | `setVariable` | `processId`, `frameId`, `name`, encoded `value`, optional lexical `depth` | Updated process state |
 | `setSendOperand` | `processId`, `frameId`, operand `index`, encoded `value` | Updated process state |
@@ -878,8 +975,9 @@ const service = runtime.newObject(serviceClass);
 console.log(runtime.run(runtime.start(service, 'square:', [12n])).result);
 ```
 
-The result is `144n`.  Primitive exceptions suspend at the send and preserve
-its operands.  A synchronous primitive runs to completion or failure within
+The result is `144n`.  A primitive that throws signals an `Error` at the
+send.  Unhandled, the error suspends the process at the send with its
+operands.  A synchronous primitive runs to completion or failure within
 one instruction.  Returning a `HostOperation` suspends the process.
 
 ### Host values and calls
@@ -906,8 +1004,8 @@ runtime identity.
 | `on: eventType do: block` | Register an event callback in the current host scope |
 | `isUndefined` | Test for the wrapped JavaScript undefined value |
 
-Host call results pass through the same value conversion.  Exceptions pause at
-the send.  A promise-returning call waits for its result.  A property read
+Host call results pass through the same value conversion.  A thrown host
+exception signals an `Error` at the send.  A promise-returning call waits for its result.  A property read
 returns its value, including a wrapped promise if the property contains one.
 
 ### Asynchronous operations
@@ -931,8 +1029,9 @@ runner.close();
 
 The output is `waiting`, followed by `completed 42n`.  `whenReady` resolves
 after success, rejection, or cancellation changes the process state.  A
-successful call advances past the send.  A rejected call pauses with an error
-at the same send and keeps its operands.  `retry` invokes it again, so the
+successful call advances past the send.  A rejected call signals an `Error`
+at the same send, and the process becomes ready to run the signal.
+Unhandled, the error pauses the process at that send with its operands.  `retry` invokes it again, so the
 host operation can repeat effects.  Earlier Smallslop instructions keep their
 effects.  Stepping stops at the requested point after a call completes.
 Pending host work retains its runtime until completion or cancellation, and

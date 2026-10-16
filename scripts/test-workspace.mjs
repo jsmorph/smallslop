@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -138,6 +138,36 @@ try {
   assert.equal(await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'side', value: 'instance'}).owner`), 'Inspector');
   assert.ok(await evaluate(sessionId, `[...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished system-browser.'))`));
 
+  const browserBody = `smallslop.workspace.world.panes.get('system-browser').view.body`;
+  const browserButton = label => `[...${browserBody}.querySelectorAll('button')].find(button => button.textContent === '${label}')`;
+  const browserState = `smallslop.command({op: 'browse', action: 'state'})`;
+  await evaluate(sessionId, `${browserButton('New class')}.click()`);
+  await until(sessionId, `${browserBody}.querySelector('.browser-source').value.startsWith("Class named: 'NewClass'\\n  superclass: 'Inspector'")`);
+  await evaluate(sessionId, `(() => {
+    const editor = ${browserBody}.querySelector('.browser-source');
+    editor.value = editor.value.replace("'NewClass'", "'Note'").replace("instanceVariableNames: ''", "instanceVariableNames: 'text'");
+    editor.dispatchEvent(new Event('input'));
+  })()`);
+  await until(sessionId, `!${browserButton('Accept')}.disabled`);
+  await evaluate(sessionId, `${browserButton('Accept')}.click()`);
+  await until(sessionId, `${browserState}.message === 'Defined Note'`);
+  assert.equal(await evaluate(sessionId, `${browserState}.className`), 'Note');
+  await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: directory });
+  await evaluate(sessionId, `${browserButton('File out')}.click()`);
+  let filedOut = null;
+  for (let attempt = 0; attempt < 100 && filedOut === null; attempt++) {
+    filedOut = await readFile(join(directory, 'Note.st'), 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+    if (filedOut === null) await delay(50);
+  }
+  assert.equal(filedOut, await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'fileOut'}).text`));
+  assert.match(filedOut, /^Smalltalk interchangeVersion: '1.0'!\nClass named: 'Note'\n  superclass: 'Inspector'\n  indexedInstanceVariables: #none\n  instanceVariableNames: 'text'/);
+  await writeFile(join(directory, 'Memo.st'), filedOut.replaceAll('Note', 'Memo') + "Memo method!\ntitle ^'memo'!\n");
+  const { root: documentNode } = await cdp.send('DOM.getDocument', {}, sessionId);
+  const { nodeId: fileInput } = await cdp.send('DOM.querySelector', { nodeId: documentNode.nodeId, selector: 'input[aria-label="File in source"]' }, sessionId);
+  await cdp.send('DOM.setFileInputFiles', { nodeId: fileInput, files: [join(directory, 'Memo.st')] }, sessionId);
+  await until(sessionId, `${browserState}.message === 'Filed in 1 class and 1 method'`);
+  assert.equal(await evaluate(sessionId, `smallslop.workspace.world.runtime.classes.get('Memo').methods.get('title').protocol`), 'unclassified');
+
   const firstDetails = `smallslop.workspace.world.panes.get('agent').view.body.querySelector('details')`;
   await evaluate(sessionId, `${firstDetails}.open = true`);
   await prompt(sessionId, 'database');
@@ -210,7 +240,7 @@ try {
   await until(sessionId, `globalThis.smallslop && ${idle}`);
   assert.equal(await evaluate(sessionId, `smallslop.workspace.world.panes.get('system-browser').object.slots.x`), 300);
   assert.ok(calls.some(call => call.name === 'smallslop_server'));
-  console.log('Chromium passed the workspace agent, page command, server database, component, reconnect, interrupt, reset, and arrangement tests.');
+  console.log('Chromium passed the workspace agent, page command, class definition, file in and out, server database, component, reconnect, interrupt, reset, and arrangement tests.');
 } finally {
   const exit = browser?.exitCode === null ? new Promise(resolve => browser.once('exit', resolve)) : Promise.resolve();
   if (cdp) { await cdp.send('Browser.close'); await cdp.close(); }

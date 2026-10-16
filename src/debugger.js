@@ -93,7 +93,7 @@ export class Debugger {
     }
     const value = this.#object(id);
     const result = { ...this.value(value) };
-    if (value instanceof SmallObject) result.slots = this.#bindings(value.slots);
+    if (value instanceof SmallObject) result.slots = this.#bindings(Object.fromEntries(value.klass.slots.map(name => [name, value.slots[name] ?? null])));
     else if (value instanceof SmallClass) {
       Object.assign(result, {
         name: value.name, category: value.category, superclass: this.value(value.superclass), slots: value.slots,

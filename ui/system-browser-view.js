@@ -62,6 +62,7 @@ export function systemBrowserView(widget, body, on, { world, element, perform, c
   });
 
   const editing = element('div', undefined, 'browser-editing');
+  const newClass = element('button', 'New class');
   const newMethod = element('button', 'New method');
   const accept = element('button', 'Accept');
   const revert = element('button', 'Revert');
@@ -69,11 +70,33 @@ export function systemBrowserView(widget, body, on, { world, element, perform, c
   const protocol = element('input');
   protocol.setAttribute('aria-label', 'Method protocol');
   protocolLabel.append(protocol);
+  const fileInButton = element('button', 'File in');
+  const fileInput = element('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.st,text/plain';
+  fileInput.hidden = true;
+  fileInput.setAttribute('aria-label', 'File in source');
+  const fileOutButton = element('button', 'File out');
+  on(newClass, 'click', () => perform(() => act('newClass')));
+  on(fileInButton, 'click', () => fileInput.click());
+  on(fileInput, 'change', () => {
+    const [file] = fileInput.files;
+    fileInput.value = '';
+    if (file) perform(async () => act('fileIn', await file.text()));
+  });
+  on(fileOutButton, 'click', () => perform(async () => {
+    const { fileName, text } = await act('fileOut');
+    const link = element('a');
+    link.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }));
   on(newMethod, 'click', () => perform(() => act('new')));
   on(accept, 'click', () => perform(() => act('accept')));
   on(revert, 'click', () => perform(() => act('revert')));
   on(protocol, 'input', () => perform(() => act('methodProtocol', protocol.value)));
-  editing.append(newMethod, accept, revert, protocolLabel);
+  editing.append(newClass, newMethod, accept, revert, protocolLabel, fileInButton, fileOutButton, fileInput);
   const status = element('output', undefined, 'browser-status');
   status.setAttribute('aria-label', 'Browser status');
   status.setAttribute('aria-live', 'polite');
@@ -110,15 +133,12 @@ export function systemBrowserView(widget, body, on, { world, element, perform, c
     instance.setAttribute('aria-pressed', String(state.side === 'instance'));
     classSide.setAttribute('aria-pressed', String(state.side === 'class'));
     lists.protocol.disabled = lists.method.disabled = instance.disabled = classSide.disabled = !state.className;
-    const ownSlots = state.slots.filter(name => !state.inheritedSlots.includes(name));
-    const source = state.methodId || state.creating ? state.source : state.owner
-      ? `${state.owner}\n\nSuperclass: ${state.superclass ?? 'none'}\nInstance slots: ${ownSlots.join(' ') || 'none'}\nInherited slots: ${state.inheritedSlots.join(' ') || 'none'}`
-      : 'Select a class to browse its methods.';
+    const source = state.methodId || state.creating || state.defining ? state.source : 'Select a class, or choose New class.';
     if (editor.value !== source) editor.value = source;
     editor.readOnly = !state.editable;
     if (protocol.value !== state.draftProtocol) protocol.value = state.draftProtocol;
-    protocol.disabled = !state.editable;
-    newMethod.disabled = !state.className;
+    protocol.disabled = !state.editable || state.defining;
+    newMethod.disabled = fileOutButton.disabled = !state.className;
     accept.disabled = !state.editable || !state.dirty || state.conflict;
     revert.disabled = !state.dirty && !state.conflict && !state.creating;
     breakpoint.disabled = !state.methodId || state.format === 'primitive';
@@ -141,7 +161,7 @@ export function systemBrowserView(widget, body, on, { world, element, perform, c
     const error = world.runtime.processes.get(widget.last)?.stop;
     status.textContent = error?.reason === 'error' ? error.error.message
       : state.conflict ? `Version ${state.currentMethodId} replaced version ${state.methodId}. Draft retained. Revert loads the current version.`
-        : [state.owner, state.selector, format ?? (state.creating ? 'New method' : 'Class definition'),
+        : [state.defining ? null : state.owner, state.selector, format ?? (state.creating ? 'New method' : state.defining ? 'Class definition' : null),
           state.methodId ? `version ${state.methodId}` : '', state.dirty ? 'Unsaved changes' : state.message].filter(Boolean).join(' · ');
     status.classList.toggle('browser-error', state.conflict || error?.reason === 'error');
     root.closest('.window, .workspace-pane').querySelector('h2').textContent = `System Browser${state.className ? `: ${state.className}` : ''}${state.dirty ? ' *' : ''}`;

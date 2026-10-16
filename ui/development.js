@@ -8,7 +8,8 @@ import { element } from './pane-view.js';
 
 const browserActions = { category: 'selectCategory:', class: 'selectClass:', side: 'selectSide:', protocol: 'selectProtocol:',
   method: 'selectMethod:', source: 'editSource:', methodProtocol: 'editProtocol:', new: 'newMethod', accept: 'accept',
-  revert: 'revert', breakpoint: 'toggleBreakpoint', find: 'find:', clearResults: 'clearResults', reveal: 'browseClass:method:' };
+  revert: 'revert', breakpoint: 'toggleBreakpoint', find: 'find:', clearResults: 'clearResults', reveal: 'browseClass:method:',
+  newClass: 'newClass', fileIn: 'fileIn:' };
 
 export function createWorkspaceDevelopment(workspace, { server } = {}) {
   const { world, report } = workspace;
@@ -65,6 +66,7 @@ export function createWorkspaceDevelopment(workspace, { server } = {}) {
   function execute(request) {
     if (request.op === 'browse') {
       if (request.action === 'state') return browserPane.browser.state();
+      if (request.action === 'fileOut') return browserPane.browser.fileOut();
       const selector = browserActions[request.action];
       if (!selector) throw new Error(`Unknown browser action: ${request.action}.`);
       const args = request.action === 'reveal' ? [request.className, request.selector ?? null] : selector.endsWith(':') ? [request.value] : [];

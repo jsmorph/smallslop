@@ -6,3 +6,4 @@ export { Runtime, SmallClass, SmallObject, SmallSymbol, SmallCharacter, Block } 
 export { HostOperation, HostValue } from './host-value.js';
 export { Host, HostScope } from './host.js';
 export { ProcessRunner } from './runner.js';
+export { classDefinition, defineClassElement, definitionText, fileIn, fileOut, installInterchangeElements, interchangeChunks, interchangeVersion, parseInterchange, parseInterchangeElements } from './interchange.js';

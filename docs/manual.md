@@ -451,6 +451,83 @@ version and remain attached to that version after replacement.
 dictionary, active frame, escaped block, breakpoint, or explicit debugger
 reference keeps a version alive.  Unreferenced versions can be collected.
 
+## Class definitions and source files
+
+`redefineClass(klass, options)` changes an existing class.  Its options are
+`superclass`, `slots`, `classSlots`, and `category`, which name the class's
+own slots and class instance variables, as in `defineClass`.  An omitted
+option keeps its current value.  The class keeps its identity, methods,
+instances, and class instance variable values, and its subclasses inherit the
+new layout.  An existing instance keeps its slot values.  A slot added to its
+layout reads as `nil` until assigned.
+
+When the superclass or a slot list changes, the runtime recompiles every source
+method of the class, its subclasses, and their metaclasses.  A method that no
+longer compiles keeps its previous version, and `redefineClass` returns one
+record per such method with `className`, `selector`, and `message`.  A kept
+version that names a removed slot suspends with `Unknown instance slot` when
+it runs.  `Object`, the kernel classes with native instances, and metaclasses
+cannot be redefined.  A cycle in the hierarchy or a slot name defined twice in
+one inheritance chain throws an error and leaves every class unchanged.
+
+Smallslop reads and writes the ANSI interchange format (ANSI draft section
+4).  A file starts with the version element, and each element ends with `!`.
+A `!` inside an element is written as `!!`.
+
+```
+Smalltalk interchangeVersion: '1.0'!
+Class named: 'Point3'
+  superclass: 'Object'
+  indexedInstanceVariables: #none
+  instanceVariableNames: 'x y'
+  classVariableNames: ''
+  sharedPools: ''
+  classInstanceVariableNames: ''!
+Annotation key: 'category' value: 'Graphics'!
+
+Point3 method!
+x
+  ^x!
+Annotation key: 'category' value: 'accessing'!
+
+Point3 method!
+setX: newX y: newY
+  x := newX.
+  y := newY!
+Annotation key: 'category' value: 'initializing'!
+
+Point3 classMethod!
+x: newX y: newY
+  ^self new setX: newX y: newY!
+Annotation key: 'category' value: 'instance creation'!
+```
+
+The reader accepts the version element, class definitions, method and class
+method definitions, comments, and annotations.  A `category` annotation names
+a class's category or a method's protocol.  The reader ignores other
+annotations, such as `comment` and `author`.  It rejects global, pool, and
+initializer elements, class variables, shared pools, and indexed instance
+variables other than `#none`.
+
+| Function | Result |
+| --- | --- |
+| `fileIn(runtime, text)` | Defines or redefines the classes, then installs the methods.  It returns `{classes, methods, failures}`. |
+| `fileOut(klass)` | Interchange text for the class, its definition, and its source methods, sorted by selector |
+| `classDefinition(klass)` | The class definition element and its category annotation |
+| `parseInterchange(text)` | The elements of a file, without changing a runtime |
+
+A file in continues past a failed class definition or method and records each
+failure with its class name and message.  A malformed file throws a
+`SyntaxError` with the character offset of the element.  `fileOut` lists
+bytecode and primitive methods in a comment, because they have no source.
+
+`loadSourceDirectory(runtime, directory)` in
+[`server/source-files.mjs`](../server/source-files.mjs) reads every `.st` file
+in a directory.  It defines each class after its superclass, regardless of
+file order, then installs the methods of every file.  Each failure record
+names its file.  `writeClassFile(klass, directory)` writes `fileOut(klass)` to
+`ClassName.st`, replacing an existing file in one rename.
+
 ## Processes and the debugger
 
 ### Process state and execution
@@ -1027,7 +1104,11 @@ server connection closes.
 The System Browser selects a category, class, protocol, and method above a
 source editor.  It installs edited methods after checking that the loaded
 version is still current, searches senders and implementors, shows the class
-hierarchy and slots, and sets entry breakpoints.  The Class button shows the
+hierarchy and slots, and sets entry breakpoints.  With a class selected and no
+method, the editor holds the class definition, and Accept redefines the class.
+New class starts a definition for a subclass of the selected class.  File out
+downloads the selected class as `ClassName.st`, and File in reads an
+interchange file into the page runtime.  The Class button shows the
 class side, the methods of the selected class's metaclass.  Each browser's
 selections and draft belong to its Smallslop object.
 
@@ -1160,7 +1241,7 @@ process completed and throws an error describing any other outcome.
 
 | Area | Pending work |
 | --- | --- |
-| Object model | Instance-layout migration |
+| Interchange format | Class variables, shared pools, indexed instance variables, globals, pools, and initializers |
 | Debugger | Source-level stepping and invocation restart |
 | Host access | Constructors, module imports, host symbols, and callbacks requiring synchronous return values |
 | Persistence | Saved interpreter images, saved object graphs, suspended execution, and host-resource reconstruction.  Components save their source and declared state. |

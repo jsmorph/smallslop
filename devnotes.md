@@ -168,5 +168,25 @@ constructors such as `Array new: 3` need them.
 - [x] 2. Symbols, characters, cascades, literal arrays, and radix integers.
 - [x] 3. Metaclasses.
 - [x] 4. Strings, collections, streams, `printString`, `to:do:`, and fractions.
-- [ ] 5. The interchange format: file in and file out, class definition in the System Browser, and directory loading in Node.
+- [x] 5. The interchange format: file in and file out, class definition in the System Browser, and directory loading in Node.
 - [ ] 6. Exceptions.
+
+### Step 5 notes
+
+The reader follows the grammar in ANSI section 4.1.  It defines every class
+in a file or directory before it installs any method, so a method may precede
+its class definition, which ANSI does not require readers to accept.  A
+method's protocol travels in the standard `category` annotation, which ANSI
+defines for any language element.  Smallslop has no class comments, so
+`comment` annotations are ignored.
+
+`redefineClass` recompiles source methods only when the superclass or a slot
+list changes.  Instance slot stores keep removed slots, so restoring a slot
+restores the old values.  Slot instructions check the class layout and read a
+missing key as `nil`.
+
+`loadSourceDirectory` is a library function.  The workspace server does not
+load or save source directories, because the place where page classes persist
+needs a decision.  The Chromium workspace test checks File out with
+`Browser.setDownloadBehavior` and File in with `DOM.setFileInputFiles`
+([Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)).

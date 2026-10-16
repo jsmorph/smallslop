@@ -12,7 +12,7 @@ function fail(source, position, message) {
   throw error;
 }
 
-function tokenize(source) {
+export function tokenize(source) {
   const tokens = [];
   let offset = 0;
   const add = (kind, value, start) => tokens.push({ kind, value, start, end: offset });

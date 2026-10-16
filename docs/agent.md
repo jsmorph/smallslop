@@ -123,8 +123,12 @@ defines the list and passes most commands to
 | `diskExample` | none | Install the disk-usage components and show their pane |
 
 `browse` actions are `state`, `category`, `class`, `side`, `protocol`,
-`method`, `source`, `methodProtocol`, `new`, `accept`, `revert`, `breakpoint`,
-`find`, `clearResults`, and `reveal`.  `objectInspector` actions are `state`,
+`method`, `source`, `methodProtocol`, `new`, `newClass`, `accept`, `revert`,
+`breakpoint`, `find`, `clearResults`, `reveal`, `fileIn`, and `fileOut`.
+With a class selected and no method, `source` edits the class definition, and
+`accept` defines or redefines the class.  `fileIn` takes interchange text as
+`value`, and `fileOut` returns the selected class as `fileName` and `text`.
+`objectInspector` actions are `state`,
 `select`, `page`, `expression`, `evaluate`, `run`, `resume`, `pause`, `step`,
 `stepOver`, `stepOut`, `retry`, `cancel`, `openSelected`, `openResult`,
 `openClass`, `browse`, `debugger`, and `debug`.  The server also sends the

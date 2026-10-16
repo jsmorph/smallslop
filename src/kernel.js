@@ -65,7 +65,7 @@ function installObjectProtocol(runtime) {
     if (Array.isArray(receiver)) return [...receiver];
     if (!(receiver instanceof SmallObject)) return receiver;
     const copy = new SmallObject(receiver.klass);
-    Object.assign(copy.slots, receiver.slots);
+    for (const name of receiver.klass.slots) if (Object.hasOwn(receiver.slots, name)) copy.slots[name] = receiver.slots[name];
     return copy;
   }, 'copying');
   protocol(object, 'identityHash', 0, receiver => runtime.identityHash(receiver), 'comparing');

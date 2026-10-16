@@ -1,16 +1,18 @@
-import { Code, decode } from '../src/index.js';
+import { Code, classDefinition, decode, defineClassElement, definitionText, fileIn, fileOut, parseInterchangeElements } from '../src/index.js';
 
 const methods = {
   selecting: [
     `requireClean ^service call: 'requireClean' with: self hasChanges`,
     `hasChanges ^(draft ~= baseline) or: [draftProtocol ~= baselineProtocol]`,
     `clearMethod
-      selector := nil. method := nil. creating := false.
-      draft := ''. baseline := ''. message := ''.
+      selector := nil. method := nil. creating := false. message := ''.
+      defining := className notNil.
+      draft := defining ifTrue: [service call: 'definition'] ifFalse: [''].
+      baseline := draft.
       draftProtocol := protocol isNil ifTrue: ['unclassified'] ifFalse: [protocol].
       baselineProtocol := draftProtocol`,
     `loadMethod: version
-      method := version. selector := version get: 'selector'. creating := false.
+      method := version. selector := version get: 'selector'. creating := false. defining := false.
       draft := service call: 'source' with: version. baseline := draft.
       draftProtocol := version get: 'protocol'. baselineProtocol := draftProtocol.
       protocol isNil ifFalse: [protocol := draftProtocol].
@@ -39,12 +41,27 @@ const methods = {
       service call: 'requireEditable'. draftProtocol := service call: 'text' with: name. self render`,
     `newMethod
       self requireClean. service call: 'owner'. self clearMethod.
-      creating := true. draft := 'newMethod
+      creating := true. defining := false. draft := 'newMethod
   ^self'. self render`,
+    `newClass
+      self requireClean. self clearMethod.
+      defining := true. draft := service call: 'classTemplate'. baseline := ''. self render`,
     `accept
       service call: 'requireEditable'.
+      defining ifTrue: [^self acceptDefinition].
       self loadMethod: (service call: 'install' with: draft with: draftProtocol with: method).
       protocol := draftProtocol. message := 'Installed'. self render`,
+    `acceptDefinition
+      | result |
+      result := service call: 'define' with: draft.
+      className := result get: 'className'. side := 'instance'. protocol := nil.
+      category isNil ifFalse: [category := service call: 'categoryFor' with: className].
+      self clearMethod. message := result get: 'message'. self render`,
+    `fileIn: text
+      | report |
+      self requireClean. report := service call: 'fileIn' with: text.
+      (className notNil and: [(service call: 'hasClass' with: className) not]) ifTrue: [className := nil].
+      self clearMethod. message := report. self render`,
     `revert
       selector isNil
         ifTrue: [self clearMethod]
@@ -65,7 +82,7 @@ const methods = {
 export function installSystemBrowser(world, superclass, { retainOnClose = false } = {}) {
   const klass = world.runtime.defineClass('SystemBrowser', { superclass, category: 'Tools-Browser',
     slots: ['category', 'className', 'side', 'protocol', 'selector', 'method', 'draft', 'baseline',
-      'draftProtocol', 'baselineProtocol', 'creating', 'message', 'query', 'results', 'service'] });
+      'draftProtocol', 'baselineProtocol', 'creating', 'defining', 'message', 'query', 'results', 'service'] });
   for (const [protocol, sources] of Object.entries(methods)) {
     for (const source of sources) {
       if (retainOnClose && source.startsWith("close ")) continue;
@@ -80,7 +97,9 @@ export class BrowserService {
     this.widget = widget;
     Object.assign(this.slots, { category, className, side: 'instance',
       draft: '', baseline: '', draftProtocol: 'unclassified', baselineProtocol: 'unclassified',
-      creating: false, message: '', service: world.host.value(this) });
+      creating: false, defining: false, message: '', service: world.host.value(this) });
+    if (className) this.slots.draft = this.slots.baseline = this.definition();
+    this.slots.defining = !!className;
   }
 
   get slots() { return this.widget.object.slots; }
@@ -104,6 +123,8 @@ export class BrowserService {
     if (!this.runtime.classes.has(name)) throw new Error(`Unknown class: ${name}.`);
     return name;
   }
+
+  hasClass(name) { return this.runtime.classes.has(name); }
 
   categoryFor(name) { return this.runtime.classes.get(this.className(name)).category; }
 
@@ -147,7 +168,36 @@ export class BrowserService {
   }
 
   requireEditable() {
-    if (!this.state().editable) throw new Error('Select a source method or choose New method.');
+    if (!this.state().editable) throw new Error('Select a class or a source method, or choose New method or New class.');
+  }
+
+  definition() {
+    return classDefinition(this.runtime.classes.get(this.className(this.slots.className)));
+  }
+
+  classTemplate() {
+    const { category, className } = this.slots;
+    return definitionText({ name: 'NewClass', superclass: className ?? 'Object', category: category ?? 'Unclassified' });
+  }
+
+  define(text) {
+    const elements = parseInterchangeElements(text);
+    if (elements.length !== 1 || elements[0].type !== 'class') throw new Error('Accept one class definition, followed by its annotations.');
+    const { klass, failures } = defineClassElement(this.runtime, elements[0]);
+    return { className: klass.name, message: [`Defined ${klass.name}`,
+      ...failures.map(({ className, selector, message }) => `${className}>>${selector} failed to recompile: ${message}`)].join('. ') };
+  }
+
+  fileIn(text) {
+    const { classes, methods, failures } = fileIn(this.runtime, text);
+    const count = (items, noun) => `${items.length} ${noun}${items.length === 1 ? '' : noun.endsWith('s') ? 'es' : 's'}`;
+    return [`Filed in ${count(classes, 'class')} and ${count(methods, 'method')}`,
+      ...failures.map(({ className, selector, source, message }) => `${className}>>${selector ?? source.split('\n')[0]} failed: ${message}`)].join('. ');
+  }
+
+  fileOut() {
+    const klass = this.runtime.classes.get(this.className(this.slots.className));
+    return { fileName: `${klass.name}.st`, text: fileOut(klass) };
   }
 
   install(source, protocol, method) {
@@ -223,7 +273,7 @@ export class BrowserService {
       inheritedSlots: owner?.superclass?.slots ?? [],
       source: s.draft, draftProtocol: s.draftProtocol, dirty, creating: s.creating,
       methodId: method?.id ?? null, currentMethodId: current?.id ?? null,
-      format: method?.format ?? null, editable: !!s.creating || method?.format === 'source',
+      format: method?.format ?? null, defining: !!s.defining, editable: !!s.creating || !!s.defining || method?.format === 'source',
       conflict: !!method && current !== method, breakpoints, message: s.message,
       query: s.query, results: s.results ? this.world.host.unwrap(s.results) : [],
     };

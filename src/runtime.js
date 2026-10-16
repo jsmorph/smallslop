@@ -97,6 +97,60 @@ export class Runtime {
     return klass;
   }
 
+  redefineClass(klass, { superclass = klass.superclass, slots, classSlots, category = klass.category }) {
+    if (!(klass instanceof SmallClass) || klass.runtime !== this || klass.meta || this.nativeClasses.has(klass) || klass === this.objectClass) {
+      throw new Error(`${klass?.name} cannot be redefined.`);
+    }
+    if (!(superclass instanceof SmallClass) || superclass.runtime !== this || superclass.meta) throw new Error('Superclass must be a class in this runtime.');
+    for (let current = superclass; current; current = current.superclass) if (current === klass) throw new Error(`${klass.name} cannot inherit from itself.`);
+    if (typeof category !== 'string' || !category.trim()) throw new Error('A class category needs a name.');
+    const own = behavior => behavior.slots.slice(behavior.superclass?.slots.length ?? 0);
+    const affected = [];
+    const collect = current => {
+      affected.push({ klass: current, slots: own(current), classSlots: own(current.metaclass) });
+      for (const child of this.classes.values()) if (child.superclass === current) collect(child);
+    };
+    collect(klass);
+    affected[0].slots = slots ?? affected[0].slots;
+    affected[0].classSlots = classSlots ?? affected[0].classSlots;
+    if ([...affected[0].slots, ...affected[0].classSlots].some(slot => typeof slot !== 'string' || !slot)) throw new Error('Slots need names.');
+    const before = affected.map(({ klass: current }) => [current.superclass, current.slots, current.metaclass.slots]);
+    const layoutChanged = superclass !== klass.superclass
+      || affected[0].slots.join(' ') !== own(klass).join(' ') || affected[0].classSlots.join(' ') !== own(klass.metaclass).join(' ');
+    klass.superclass = superclass;
+    klass.metaclass.superclass = superclass.metaclass;
+    try {
+      for (const entry of affected) {
+        const current = entry.klass;
+        for (const [behavior, names] of [[current, entry.slots], [current.metaclass, entry.classSlots]]) {
+          const layout = [...behavior.superclass.slots, ...names];
+          if (new Set(layout).size !== layout.length) throw new Error(`Duplicate slot in ${behavior.name}.`);
+          behavior.slots = Object.freeze(layout);
+        }
+        for (const name of current.metaclass.slots) if (!Object.hasOwn(current.slotValues, name)) current.slotValues[name] = null;
+      }
+    } catch (error) {
+      affected.forEach(({ klass: current }, index) => {
+        [current.superclass, current.slots, current.metaclass.slots] = before[index];
+        current.metaclass.superclass = current.superclass.metaclass;
+      });
+      throw error;
+    }
+    klass.category = klass.metaclass.category = category;
+    const failures = [];
+    if (!layoutChanged) return failures;
+    for (const { klass: current } of affected) {
+      for (const behavior of [current, current.metaclass]) {
+        for (const method of [...behavior.methods.values()]) {
+          if (method.format !== 'source') continue;
+          try { this.installSource(behavior, method.code.source, { protocol: method.protocol }); }
+          catch (error) { failures.push({ className: behavior.name, selector: method.selector, message: error.message }); }
+        }
+      }
+    }
+    return failures;
+  }
+
   classNamed(name) {
     const meta = typeof name === 'string' && name.endsWith(' class');
     const klass = this.classes.get(meta ? name.slice(0, -' class'.length) : name);
@@ -502,10 +556,12 @@ export class Runtime {
       case Op.write: need(1); frame.environment.at(...args).values[args[1]] = stack.at(-1); break;
       case Op.slot:
       case Op.storeSlot: {
-        const store = frame.receiver instanceof SmallObject ? frame.receiver.slots
-          : frame.receiver instanceof SmallClass && !frame.receiver.meta ? frame.receiver.slotValues : null;
-        if (!store || !Object.hasOwn(store, literal)) throw new Error(`Unknown instance slot: ${literal}.`);
-        if (op === Op.slot) stack.push(store[literal]);
+        const receiver = frame.receiver;
+        const store = receiver instanceof SmallObject ? receiver.slots
+          : receiver instanceof SmallClass && !receiver.meta ? receiver.slotValues : null;
+        const layout = receiver instanceof SmallObject ? receiver.klass.slots : receiver?.metaclass?.slots;
+        if (!store || !layout.includes(literal)) throw new Error(`Unknown instance slot: ${literal}.`);
+        if (op === Op.slot) stack.push(Object.hasOwn(store, literal) ? store[literal] : null);
         else { need(1); store[literal] = stack.at(-1); }
         break;
       }

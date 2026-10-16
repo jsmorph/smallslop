@@ -29,24 +29,10 @@ component test, and an example page with an agent pane.
 
 ### Test results
 
-`npm test` passes 64 tests.  The 11 tests that Photoslop runs and this
-repository omits cover the photo page, EXIF extraction, and two Photoslop
-workspace modules.  `npm run test:browser`, `npm run demo`, and
-`npm run test:workspace` pass.  The workspace test checks host and path
-restrictions, agent page commands, server SQL, a server Database inspector,
-the Debugger's Server methods, interrupt, and reset.  The ten Node examples
-in `docs/manual.md` run from the repository root.
-
-`createPiAgent` created and disposed a Pi session with
-`openai-codex/gpt-5.6-sol` from the stored Pi login.  No test sent a prompt
-to a model, so a live agent turn remains untested here.
-
-### Open items
-
-| Item | Detail |
-| --- | --- |
-| Model preferences | `server/model-runtime.mjs` contains Photoslop's preferred-model list.  The user accepted it. |
-| Live agent turn | No test has sent a prompt to a model from this repository. |
+The Node tests, the counter and repair browser tests, the repair demo, and
+the workspace test pass.  The Photoslop tests left out of this repository
+cover the photo page, EXIF extraction, and two Photoslop workspace modules.
+The Node examples in the manual run from the repository root.
 
 ## 2026-10-16: Audit, component namespace, and listening address
 
@@ -83,6 +69,32 @@ Pi credentials, and of the database.
 - [x] Rename `catalog` to `namespace` and remove `cancelPath`.
 - [x] Add `--host` and restrict the host check to loopback servers.
 
+## 2026-10-16: Components in the workspace
+
+The user asked for the example components in the workspace page.  The
+component service, server child process, and browser component code come
+from Photoslop's `server/component-service.mjs`,
+`server/component-process.mjs`, `server/component-child.mjs`,
+`server/debug-connection.mjs`, and `app/workspace-live-components.js`.
+Photoslop selects a catalog and reaches pages through its command channel.
+Here the service receives a page handle for each WebSocket session instead.
+
+| Decision | Reason |
+| --- | --- |
+| Component requests travel as `{type: 'components'}` session messages | The session already identifies the page, so registration needs no page ID |
+| One service per Web server, shared by all pages | Server instances and jobs outlive a page, as in Photoslop |
+| The service sends `{op: 'componentRuntime'}` page commands | Agent `components` commands use another name on the same channel |
+| The example store is `.local/components`, ignored by Git | Installed versions persist across server restarts |
+| Reload restoration and Photoslop workspace objects were left out | Both depend on Photoslop's saved workspace records |
+| Job records drop `result.source`, `referenceSource`, and `filename` | Those fields described Photoslop image outputs.  `call.result` keeps the encoded result. |
+| The page publishes `globalThis.smallslopComponents.identity` | `debug.attach` verifies the target page with it |
+| `AgentConnection` became `SessionConnection` | The connection carries prompts, page commands, server commands, and component requests |
+
+The workspace test installs the disk example, refreshes its pane, and lists
+the page's instances through an agent page command.
+`test/component-service.test.js` runs the disk reader in the server child
+process without a browser.
+
 ## 2026-10-16: Documentation review
 
 `README.md` repeats most of the manual's API sections in shorter form, so
@@ -93,10 +105,11 @@ The manual omits the APIs that a project needs after copying `ui/` or
 history phrasing, scattered "remain pending" notes, broken line wraps, and
 an inaccurate sentence about which modules carry debugger operations.
 
-- [ ] Reduce `README.md` to a description, the directory table, setup and commands, the workspace example with its security note, and a link to the manual.  Move any fact found only in the README into the manual.
-- [ ] Reorganize the manual: overview; running the examples and tests; language; classes; processes and debugger; JSON debugger API; embedding and bytecode; browser tools; server and agent; components; limitations.
-- [ ] Document `createWorkspace`, pane definitions, workspace commands, `createWorkspaceDevelopment`, `createSmallslopServer`, the agent interface, `createPiAgent`, the three tool names, `AgentConnection`, and the example's page commands.
-- [ ] Document `components/` and `ComponentStore` from the code and `test/components.test.js`, including that no page in this repository hosts the example components.
-- [ ] Collect pending work in the limitations table, and remove history phrasing, test counts, and vague sentences.
-- [ ] Check every documented option and command against the code, and run every Node example.
-- [ ] Remove test counts and settled items from these notes.
+- [x] Reduce `README.md` to a description, the directory table, setup and commands, the workspace example with its security note, and a link to the manual.  Move any fact found only in the README into the manual.
+- [x] Reorganize the manual into language, classes, processes and debugger, JSON debugger API, embedding and bytecode, browser tools, server runtime, and unimplemented features.  The agent and components have their own documents.
+- [x] Document `createWorkspace`, pane definitions, workspace commands, `createWorkspaceDevelopment`, `createSmallslopServer`, the agent interface, `createPiAgent`, the three tool names, `SessionConnection`, and the example's page commands.
+- [x] Write a full component guide in `docs/components.md`, and host the example components in the workspace page.
+- [x] Write `docs/agent.md` for the agent, the Web server, and the session protocol.
+- [x] Collect pending work in the limitations table, and remove history phrasing, test counts, and vague sentences.
+- [x] Check every documented option and command against the code, and run every Node example.
+- [x] Remove test counts and settled items from these notes.

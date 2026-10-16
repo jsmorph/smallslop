@@ -1,43 +1,19 @@
-# Smallslop manual
+# Smallslop Manual
 
-Smallslop is a Smalltalk-like language implemented as a JavaScript-hosted
-bytecode interpreter.  The same ES modules run in Node and a browser.
-Classes, method versions, lexical environments, and call frames belong to the
-runtime.  Its debugger exposes inspection, stepping, variable changes, source
-evaluation, method installation, and retry through JavaScript and JSON APIs.
+Smallslop is a Smalltalk-like language implemented as a bytecode interpreter
+in JavaScript.  The same ES modules run in Node and browsers.  Classes,
+method versions, lexical environments, and call frames are runtime objects.
+The debugger inspects, steps, edits, and retries execution through
+JavaScript and JSON APIs.
 
-This manual describes the interpreter in `src/`, the browser tools in `ui/`,
-the Node runtime, Web server, and Pi agent in `server/`, and the examples.
-`components/` holds a runtime for versioned JavaScript components, and
-`server/component-store.mjs` stores their versions.  Each directory imports
-only the directories it depends on, so a project can copy the directories it
-needs.
+This manual covers the language, classes, processes, the debugger,
+embedding, the browser tools in `ui/`, and the server runtime in
+`server/world.mjs`.  [Agent and Web Server](agent.md) covers the Web server,
+page sessions, and the agent, and [Components](components.md) covers
+installed JavaScript components.  The [README](../README.md#setup-and-commands)
+lists the setup and commands.
 
-## Running Smallslop
-
-### Requirements and commands
-
-The examples and tests run on Node 24, which provides `node:sqlite`.  The
-interpreter and browser tools use no packages.  `server/agent.mjs` and the
-workspace example use `@earendil-works/pi-coding-agent`, which `npm install`
-installs.  The commands run from the repository root:
-
-| Command | Result |
-| --- | --- |
-| `npm test` | Run the Node tests |
-| `npm run demo` | Run the nested-block debugger and missing-method repair example |
-| `npm run serve` | Serve the interactive counter page and scripted repair example on a local port |
-| `npm run test:browser` | Test page controls, serialized debugger commands, host operations, disposal, and scripted repair in Chromium |
-| `npm run workspace` | Serve the workspace example with a Pi agent on a local port |
-| `npm run test:workspace` | Test the workspace page, Web server, agent tools, and server database in Chromium with a test agent |
-
-The browser tests use `chromium` on `PATH`.  The `CHROMIUM` environment
-variable can name another Chromium executable.  The example servers print a
-URL such as `http://127.0.0.1:PORT/` and run until interrupted.  The counter
-server loads the source files at startup, so source edits require a server
-restart.  A browser on the same machine can open the printed address.
-
-### Evaluating an expression in Node
+## Evaluating an expression in Node
 
 This command prints `42n`, Node's display of an exact integer:
 
@@ -63,177 +39,6 @@ browser-console example.  Each can be saved in a `.mjs` file at the repository
 root and run with `node`, or passed to `node --input-type=module` on standard
 input.  Smallslop examples marked `smalltalk` are source strings for
 `evaluate`, unless described as method definitions.
-
-### Using the browser
-
-The root URL of `npm run serve` opens two counters and a shared debugger and
-method editor.  Each counter is a Smallslop object with its own DOM root and
-host scope.
-Smallslop methods register its callbacks, update its count, render its output,
-and invoke delayed host work.  The [counter source](../examples/counters.js)
-contains those methods and the JavaScript debugger interface.
-
-| Control | Behavior |
-| --- | --- |
-| Increment | Invoke a block that captures the increment amount |
-| Pause next event | Pause that counter's next queued callback before its entry send |
-| Missing method | Increment the stored count, then send the initially missing `missingText` message |
-| Count 10,000 | Run a loop in bounded batches and render when it finishes |
-| Increment later | Wait for a host result, then increment |
-| Reject later | Wait for a host rejection and pause at the failed call |
-| Inspect process | Select that counter's latest process |
-| Remove | Remove the counter's listeners and cancel and dispose its processes |
-
-The debugger lists processes and frames, highlights the current source span,
-and shows lexical bindings and prepared send operands.  Edits use the JSON
-value format described under [agent access](#json-debugger-api-for-agents).
-Run starts ordinary execution.  Resume preserves a pending step-over or
-step-out target.  Break here uses the selected frame's code path and PC.
-Break at entry uses the method version loaded in the editor.  A method
-breakpoint applies to every invocation of that version.
-
-A captured-binding exercise uses these controls:
-
-1. Select Pause next event on the first counter, then Increment.
-2. Step into the callback.  For Increment, three bytecode steps enter its block.
-3. Set the `step` binding in scope 1 to `{"kind":"integer","value":"7"}`.
-4. Increment the other counter while the first remains paused.
-5. Resume the first process.  Its count increases by seven.  Later callbacks share the changed binding.
-
-New method loads `missingText ^count asString`.  After Missing method pauses,
-Install method followed by Retry completes the rendering send.  The stored
-count increases once.  Method edits preserve the version held by an active
-frame, while later sends use the replacement.
-
-Reject later pauses with a prepared `call:with:with:` send.  Setting Argument 3
-to `{"kind":"boolean","value":false}` and selecting Retry starts a successful
-host call.  Cancel during a wait cancels the timer and prevents resumption.
-Cancellation preserves state changes made before the cancelled operation.
-The counting loop updates its stored count during execution and renders at
-completion.  Inspecting its Counter receiver reveals the stored count while
-it is paused.
-
-The page retains the selected or latest terminal process for each counter
-and disposes older terminal records.  Frame evaluations inherit the counter's
-scope.  Removing a counter disposes all its processes.  The method editor
-retains its loaded version until another method is loaded.
-
-The page exposes `smallslop.dispatch(request)` for serialized debugger
-commands.  Its JSON command panel uses that function.  Page controls use the
-same debugger operations through a separate adapter, so refreshing the UI
-preserves agent handles.  An agent releases its handles and retained methods
-with `release`, `releaseMethods`, or `releaseAll`.  A standalone evaluation
-created without a frame has no counter owner and requires explicit disposal.
-
-The console also exposes `Runtime`, `Debugger`, and the page's `runtime`,
-`runner`, and `host`.
-
-```js
-const runtime = new smallslop.Runtime();
-const state = runtime.run(runtime.evaluate('2 asFloat + 0.5'));
-console.log(state.status, state.result);
-```
-
-The output is `completed 2.5`.  The linked [scripted repair
-page](../examples/repair.html) preserves the earlier demonstrations and
-their `createRepairDemo`, `runRepairDemo`, and `runAgentRepairDemo` console
-helpers.  It uses the same [repair code](../examples/repair.js) as Node.
-
-### Workspace and agent
-
-`npm run workspace` starts the [workspace example](../examples/workspace/page.js)
-and prints its local URL.  The page contains movable, resizable panes: an
-agent conversation, the System Browser, the Debugger, object inspectors, a
-pane list, and an activity log.  Pane geometry and visibility belong to
-Smallslop objects, and the user and the agent operate the same objects and
-debugger.  Each request captures the focused pane, so a later focus change
-leaves the request's target intact.  `--host ADDRESS` selects the listening
-address, with `127.0.0.1` as the default, and `--port PORT` selects the port.
-`--database FILE` gives every page the same SQLite file in place of a
-separate in-memory database.
-
-The agent requires a Pi model credential, such as a login stored in Pi's
-`auth.json` or `OPENAI_API_KEY`.  `server/model-runtime.mjs` restricts the
-choice to providers stored in `auth.json` when any exist.  It then selects
-the first available model from its preference list, or the first available
-model.
-
-`server/server.mjs` serves files from listed directories and accepts one
-WebSocket at `/api/session` for each page.  A server listening on a loopback
-address accepts only the `127.0.0.1`, `localhost`, and `[::1]` host names,
-which blocks DNS rebinding.  A server listening on another address accepts
-any host name and has no authentication, so anyone who can reach it can use
-the agent and the database.  Every server rejects WebSockets whose origin
-differs from the requested host.  Each
-connection owns a server Smallslop runtime, a database connection, and an
-agent created on the first prompt.  `ui/agent-connection.js` is the page side
-of that connection.
-
-| Direction | Message | Meaning |
-| --- | --- | --- |
-| Page to server | `{type:'prompt', id, message, context}` | Start an agent turn.  The reply arrives when the turn ends. |
-| Page to server | `{type:'interrupt'}` | Stop the current turn |
-| Page to server | `{type:'reset', id}` | Discard the conversation |
-| Page to server | `{type:'server', id, command}` | Execute a server runtime command |
-| Page to server | `{type:'commandResult', id, result}` or `error` | Answer a page command |
-| Server to page | `{type:'session', state}` | Report status, model, and messages |
-| Server to page | `{type:'command', id, command}` | Execute a page command for the agent |
-| Server to page | `{type:'reply', id, result}` or `error` | Answer a request |
-
-`server/agent.mjs` provides `createPiAgent` and `smallslopTools`.  The three
-tools read page state, execute page commands, and execute server commands.
-An application supplies the agent's instructions and can add its own tools.
-The [workspace server](../examples/workspace.mjs) passes
-`createSmallslopServer` a function that creates the agent, and the browser
-test passes a test agent instead.
-
-The System Browser selects a category, class, protocol, and method above a
-source editor.  It supports live method installation, draft and version
-checks, sender and implementor searches, class hierarchy and slot
-inspection, and entry breakpoints.  The Class button shows shared `Class`
-behavior.  `ui/development.js` adds the System Browser, Debugger, and object
-inspector panes to a workspace created by `ui/workspace.js`.  Its `server`
-option gives the Debugger a Server selector.
-
-### Object inspectors
-
-Inspect database in the toolbar opens the server Database object.  The
-`inspect` page command opens a named pane, the focused pane, or an encoded
-value.  Each inspector lists fields, displays a selected value, and
-evaluates source with its original receiver as `self`.  Inspect field and
-Inspect result open independent inspectors.  Debug it starts a paused
-evaluation, and Debugger opens that process for inspection and repair.
-
-An `Inspector` object owns its receiver, selection, offset, expression, and
-evaluation.  Each session owns its debugger handles and processes.  An
-attached debugger retains its evaluation after the inspector closes.
-Host records and arrays expose stored values and label accessors.  Collection
-inspection reads pages of 100 values and preserves ResultSet position.
-
-For embedding, `new Inspectors(host, debuggerAdapter)` installs the Inspector
-class and owns inspection sessions.  `open(value)` returns a session with
-`id`, `object`, and `state()`.  `dispatch({action:'open', value:encodedValue})`
-decodes through the supplied debugger adapter and returns session state.
-Subsequent actions use that session ID.  `retain` accepts an optional
-`processId`, and matching `close` calls release those references.  `dispose()`
-releases all sessions.  The registry uses its host's runtime and runner.
-
-### Server runtime and database
-
-`ServerWorld` in `server/world.mjs` is a server Smallslop runtime with a
-`Database` object.  `Database execute:parameters:` accepts SQL reads, writes,
-schema changes, and explicit transactions.  It returns a `ResultSet` with
-column metadata, completed rows, affected-row count, paging, and closure.
-Results stay in server memory until closed.  SQL runs in a separate process
-so the server debugger can respond during execution.
-
-`ServerWorld.dispatch` accepts the commands `state`, `schema`, `execute`,
-`next`, `page`, `close`, `completion`, `send`, `inspector`, and `debug`.  The
-agent's `smallslop_server` tool and the page's server requests use the same
-commands.  A failed SQL send pauses with its frames retained for repair and
-retry.  SQL parameters accept JSON strings, numbers, and null, or Smallslop
-encodings such as `{kind:"integer",value:"123"}` and
-`{kind:"bytes",value:[0,255]}`.
 
 ## Source language
 
@@ -393,6 +198,9 @@ JavaScript value and type, so `1 = 1.0` is false.  User classes can replace `=`.
 ## Classes and method installation
 
 `defineClass` creates an ordinary class.  Its default superclass is `Object`.
+Ordinary classes support `new`.  `new` sent to a value class, such as
+`Integer` or `String`, suspends with an error, because its instances come
+from literals and host values.
 Its optional `category` names the browser group and defaults to `Unclassified`.
 Slots include inherited slots and begin as `nil`.  Slot names must be distinct
 across the inheritance chain.  `newObject` allocates an instance.  The source
@@ -461,9 +269,9 @@ reference keeps a version alive.  Unreferenced versions can be collected.
 whose final value becomes the process result.  `startCode` accepts compiled
 code with no arguments.
 
-`inspect(id)` returns `{id, status, stop, result, action, frames}`.  Each call to `run`
-or a stepping operation returns the same record shape.  `result` holds the
-return value when `status` is `completed`.
+`inspect(id)` returns `{id, status, stop, result, action, frames}`.  Each call
+to `run` or a stepping operation returns the same record shape.  `result`
+holds the return value when `status` is `completed`.
 
 | Status | Meaning |
 | --- | --- |
@@ -647,7 +455,7 @@ retain their effects.  An error-paused process continues through `retry`.
 `cancel` discards its call chain.  A primitive that performs an effect before
 throwing can repeat that effect when retried.
 
-## JSON debugger API for agents
+## JSON debugger API
 
 ### Commands and values
 
@@ -776,9 +584,9 @@ The output is `breakpoint`, followed by `42`.
 `primitive(klass, selector, arity, invoke)` installs a method backed by a
 JavaScript function.  The function receives the receiver, an argument array,
 and `{processId, scope}`.  Its return value must have a Smallslop class or be
-a `HostOperation`.  Supported values include
-ordinary Smallslop objects, classes, blocks, `null`, Booleans, strings, BigInts,
-Numbers, and JavaScript arrays.  `classOf(value)` returns their runtime class.
+a `HostOperation`.  Supported values include ordinary Smallslop objects,
+classes, blocks, `null`, Booleans, strings, BigInts, Numbers, and JavaScript
+arrays.  `classOf(value)` returns their runtime class.
 
 ```js
 import { Runtime } from './src/index.js';
@@ -844,15 +652,15 @@ runtime.dispose(processId);
 runner.close();
 ```
 
-Pending host work retains its runtime until completion or cancellation.
-Cancellation releases that reference even if the host promise remains pending.
-
 The output is `waiting`, followed by `completed 42n`.  `whenReady` resolves
 after success, rejection, or cancellation changes the process state.  A
 successful call advances past the send.  A rejected call pauses with an error
 at the same send and keeps its operands.  `retry` invokes it again, so the host
 operation can repeat effects.  Earlier Smallslop instructions keep their
 effects.  Stepping stops at the requested point after a call completes.
+Pending host work retains its runtime until completion or cancellation, and
+cancellation releases that reference even if the host promise remains
+pending.
 
 A host method or primitive can return
 `new HostOperation(promise, {cancel: () => controller.abort()})` to support
@@ -883,20 +691,21 @@ method returns.  Event callbacks execute after dispatch, so synchronous
 event cancellation belongs in host code.
 
 `scope.listen(target, type, block)` returns a listener-removal function.
-`scope.reap({keep: processId, retain: processIds})` disposes completed or cancelled
-processes, retaining the optional process and IDs in the optional Set or Map.
-`scope.dispose()` removes its
-listeners, cancels pending processes, and disposes their records.  It reports
+`scope.reap({keep: processId, retain: processIds})` disposes completed or
+cancelled processes, except the optional `keep` process and the IDs in the
+optional `retain` Set or Map.  `scope.dispose()` removes its listeners,
+cancels pending processes, and disposes their records.  It reports
 cleanup failures through `AggregateError` after attempting every cleanup.
 Debugger object handles have a separate lifetime and use `release` or
 `releaseAll`.
 
 ### Compiling and assembling code
 
-`compileMethod(klass, source)` returns `{selector, code}` for later installation
-with `runtime.install(klass, selector, code)`.  `compileExpression(klass, source)`
-returns a `Code` object for an evaluated expression.  Compilation resolves
-class names against that runtime's class registry.
+`compileMethod(klass, source)` returns `{selector, code}` for later
+installation with `runtime.install(klass, selector, code)`.
+`compileExpression(klass, source)` returns a `Code` object for an evaluated
+expression.  Compilation resolves class names against that runtime's class
+registry.
 
 A `Code` object contains `args`, `locals`, `bytes`, `literals`, `source`,
 `positions`, and instruction `boundaries`.  Code arrays and position records
@@ -943,7 +752,205 @@ at zero, with arguments followed by locals.  Greater depths select captured
 environments.  A successful send consumes its receiver and arguments.
 An ordinary return supplies one result to the caller's operand stack.
 
-## Further work
+## Browser tools
+
+### Pane workspace
+
+`createWorkspace(options)` in [`ui/workspace.js`](../ui/workspace.js) creates
+an area of movable, resizable panes.  Each pane is a Smallslop object whose
+methods open, close, focus, move, resize, and enlarge it, so every pane
+change runs as a Smallslop process that the debugger can inspect.  The
+workspace adds a Panes pane that lists and opens panes, an Activity pane that
+lists reported errors, and Panes and Reset arrangement buttons to the
+toolbar.  It saves the arrangement in the given storage and restores it on
+the next load.
+
+| Option | Meaning |
+| --- | --- |
+| `container` | Element that holds the panes |
+| `toolbar` | Element that receives the workspace buttons |
+| `definitions` | Pane definitions to register at creation |
+| `storage`, `storageKey` | A `Storage` object, such as `localStorage`, and the key for the saved arrangement |
+| `onChange` | Function called after pane changes |
+
+The returned object has `world`, `dispatch(request)`, `add(definition)`,
+`report(error)`, `state()`, and `dispose()`.  `world` holds the pane runtime,
+its host, its debugger adapter, and its panes.  `dispatch` runs a workspace
+command, and `add` registers a pane after creation.  `report` records an
+error in the Activity pane.
+
+| Definition field | Meaning |
+| --- | --- |
+| `id` | Unique pane ID of lowercase letters, digits, and hyphens |
+| `title`, `description` | Title bar text and the Panes list description |
+| `bounds` | Initial `{x, y, width, height}` in pixels |
+| `open` | Show the pane at creation |
+| `create(body, {pane, report, on})` | Build the pane's content in `body` and return its handlers |
+| `className`, `owner`, `association` | Optional pane class, owning object, and `{id, label, color}` group marker |
+
+`create` runs when the pane is first shown.  `on(node, type, handler)` adds
+an event listener that the workspace removes with the content.  The returned
+object can provide `refresh()`, `state()`, `visibility(shown)`, and
+`dispose()`, and `state()` supplies the pane's `content` in the workspace
+state.
+
+| Command | Arguments | Effect |
+| --- | --- | --- |
+| `state` | none | Focused pane and each pane's bounds, visibility, owner, object handle, latest process, and content |
+| `open`, `close`, `focus`, `enlarge` | `id` | Send the pane object the message of the same name |
+| `move` | `id`, `x`, `y` | Send `moveTo:y:` |
+| `resize` | `id`, `width`, `height` | Send `resizeTo:height:` |
+| `send` | `id`, `selector`, `args` | Send a message with [encoded arguments](#commands-and-values) |
+| `debug` | `request` | Run a [JSON debugger request](#json-debugger-api) in the pane runtime |
+
+### Development panes
+
+`createWorkspaceDevelopment(workspace, {server})` in
+[`ui/development.js`](../ui/development.js) adds the System Browser and
+Debugger panes to a workspace.  It opens object inspectors and expression
+debuggers as further panes.  The optional `server` function sends a command
+to a [server runtime](#server-runtime), for example
+`request => connection.server(request)`.  With it, the Debugger can select
+the Server runtime, and server object inspectors work.
+
+The returned `execute(request)` runs `browse` and `objectInspector`
+commands and passes other commands to the workspace.  `inspect(value)` opens
+an inspector on a page value, and `remoteInspector(snapshot, server)` opens
+one on a server inspection.  `refresh()` updates the visible development
+panes.
+
+The System Browser selects a category, class, protocol, and method above a
+source editor.  It installs edited methods after checking that the loaded
+version is still current, searches senders and implementors, shows the
+class hierarchy and slots, and sets entry breakpoints.  The Class button
+shows the shared `Class` behavior.  Each browser's selections and draft
+belong to its Smallslop object.
+
+The Debugger lists the selected runtime's processes and source methods.  It
+inspects, pauses, resumes, steps, retries, and cancels a selected process.
+It installs edited method source, sets entry breakpoints, clears
+breakpoints, and runs JSON debugger requests typed into its command box.
+
+### Object inspectors
+
+An object inspector lists an object's fields, displays a selected value, and
+evaluates source with the inspected object as `self`.  Inspect field and
+Inspect result open independent inspectors.  Debug it starts a paused
+evaluation, and Debugger opens that process for inspection and repair.
+
+An `Inspector` object owns its receiver, selection, offset, expression, and
+evaluation.  Each session owns its debugger handles and processes.  An
+attached debugger retains its evaluation after the inspector closes.
+Host records and arrays expose stored values and label accessors.  Collection
+inspection reads pages of 100 values and preserves ResultSet position.
+
+For embedding, `new Inspectors(host, debuggerAdapter)` installs the Inspector
+class and owns inspection sessions.  `open(value)` returns a session with
+`id`, `object`, and `state()`.  `dispatch({action:'open', value:encodedValue})`
+decodes through the supplied debugger adapter and returns session state.
+Subsequent actions use that session ID.  `retain` accepts an optional
+`processId`, and matching `close` calls release those references.  `dispose()`
+releases all sessions.  The registry uses its host's runtime and runner.
+
+### Counter page
+
+The [counter page](../examples/index.html), served by `npm run serve`, shows
+two counters and a shared debugger and method editor.  Each counter is a
+Smallslop object with its own DOM root and host scope.  Smallslop methods
+register its callbacks, update its count, render its output, and invoke
+delayed host work.  The [counter source](../examples/counters.js)
+contains those methods and the JavaScript debugger interface.
+
+| Control | Behavior |
+| --- | --- |
+| Increment | Invoke a block that captures the increment amount |
+| Pause next event | Pause that counter's next queued callback before its entry send |
+| Missing method | Increment the stored count, then send the initially missing `missingText` message |
+| Count 10,000 | Run a loop in bounded batches and render when it finishes |
+| Increment later | Wait for a host result, then increment |
+| Reject later | Wait for a host rejection and pause at the failed call |
+| Inspect process | Select that counter's latest process |
+| Remove | Remove the counter's listeners and cancel and dispose its processes |
+
+The debugger lists processes and frames, highlights the current source span,
+and shows lexical bindings and prepared send operands.  Edits use the
+[JSON value format](#commands-and-values).
+Run starts ordinary execution.  Resume preserves a pending step-over or
+step-out target.  Break here uses the selected frame's code path and PC.
+Break at entry uses the method version loaded in the editor.  A method
+breakpoint applies to every invocation of that version.
+
+A captured-binding exercise uses these controls:
+
+1. Select Pause next event on the first counter, then Increment.
+2. Step into the callback.  For Increment, three bytecode steps enter its block.
+3. Set the `step` binding in scope 1 to `{"kind":"integer","value":"7"}`.
+4. Increment the other counter while the first remains paused.
+5. Resume the first process.  Its count increases by seven.  Later callbacks share the changed binding.
+
+New method loads `missingText ^count asString`.  After Missing method pauses,
+Install method followed by Retry completes the rendering send.  The stored
+count increases once.  Method edits preserve the version held by an active
+frame, while later sends use the replacement.
+
+Reject later pauses with a prepared `call:with:with:` send.  Setting Argument 3
+to `{"kind":"boolean","value":false}` and selecting Retry starts a successful
+host call.  Cancel during a wait cancels the timer and prevents resumption.
+Cancellation preserves state changes made before the cancelled operation.
+The counting loop updates its stored count during execution and renders at
+completion.  Inspecting its Counter receiver reveals the stored count while
+it is paused.
+
+The page retains the selected or latest terminal process for each counter
+and disposes older terminal records.  Frame evaluations inherit the counter's
+scope.  Removing a counter disposes all its processes.  The method editor
+retains its loaded version until another method is loaded.
+
+The page exposes `smallslop.dispatch(request)` for serialized debugger
+commands.  Its JSON command panel uses that function.  Page controls use the
+same debugger operations through a separate adapter, so refreshing the UI
+preserves agent handles.  An agent releases its handles and retained methods
+with `release`, `releaseMethods`, or `releaseAll`.  A standalone evaluation
+created without a frame has no counter owner and requires explicit disposal.
+
+The console also exposes `Runtime`, `Debugger`, and the page's `runtime`,
+`runner`, and `host`.
+
+```js
+const runtime = new smallslop.Runtime();
+const state = runtime.run(runtime.evaluate('2 asFloat + 0.5'));
+console.log(state.status, state.result);
+```
+
+The output is `completed 2.5`.  The [scripted repair
+page](../examples/repair.html) runs the nested-block and missing-method repair
+example in the browser.  Its console provides `createRepairDemo`,
+`runRepairDemo`, and `runAgentRepairDemo`, from the same [repair
+code](../examples/repair.js) that `npm run demo` runs in Node.
+
+## Server runtime
+
+`ServerWorld` in [`server/world.mjs`](../server/world.mjs) is a Smallslop
+runtime for Node with a `Database` object.  `new ServerWorld(path)` opens the
+SQLite database at `path`, or a private in-memory database for `:memory:`.
+SQL runs in a separate process, so the server debugger can respond while a
+statement runs.  [Agent and Web Server](agent.md#server-commands) lists the
+commands that `dispatch(request, {signal})` accepts.
+
+`Database execute:parameters:` accepts SQL reads, writes, schema changes,
+and explicit transactions, one statement per send.  It returns a `ResultSet`
+with column metadata, completed rows, the affected-row count, and paging.
+Results stay in server memory until closed.  A failed SQL send pauses with
+its frames retained, and the debugger can repair and retry it.
+
+`send(receiver, selector, args, {pause, signal})` starts a process and
+resolves when it completes or stops for inspection.  `pause: true` creates the
+process paused.  An aborted signal cancels the process.  `completed(response)`
+returns a command response whose process completed and throws an error
+describing any other outcome.  `close()` cancels waiting processes and closes
+the database.
+
+## Unimplemented features
 
 | Area | Pending work |
 | --- | --- |
@@ -951,8 +958,5 @@ An ordinary return supplies one result to the caller's operand stack.
 | Object model | Per-class metaclasses and instance-layout migration |
 | Debugger | Source-level stepping and invocation restart |
 | Host access | Constructors, module imports, host symbols, and callbacks requiring synchronous return values |
-| Persistence | Classes outside installed components, saved object graphs, suspended execution, and host-resource reconstruction |
+| Persistence | Saved interpreter images, saved object graphs, suspended execution, and host-resource reconstruction.  Components save their source and declared state. |
 | Optimization | Profiling and optional per-method JavaScript compilation |
-
-The [README](../README.md) provides a shorter API overview.  The
-[development notes](../devnotes.md) record decisions and test results.

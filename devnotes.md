@@ -144,3 +144,29 @@ server until the crash is fixed.
 The headline of pushed commit `7181993` has 60 characters, and the user's
 rule requires fewer.  Changing it requires rewriting published history.  The
 user chose to leave it.
+
+## 2026-10-16: Language features
+
+The user approved this plan.  The reference is the ANSI Smalltalk draft,
+revision 1.9 (NCITS J20, December 1997), with Smalltalk-80 messages where ANSI
+defines none.  Pharo extensions are excluded.
+
+| Decision | Choice |
+| --- | --- |
+| Symbols | Distinct, interned `Symbol` objects (ANSI §3.4.6.4) |
+| Characters | A `Character` class with one interned object per code point.  Strings index UTF-16 code units. |
+| Strings | Immutable JavaScript strings, conforming to `<readableString>`.  Text is built with `,`, copies, and `WriteStream`. |
+| Exceptions | ANSI §5.5 in full.  An unhandled `Error` suspends the process for the debugger (§5.5.14.1). |
+| Class definition and files | The ANSI interchange format (§4), one file per class, with categories and protocols in annotations |
+| Changed slots | A missing slot reads as `nil`, and redefinition recompiles dependent methods |
+| Arithmetic | Integer `/` returns a `Fraction`.  Integers and fractions mix exactly; Float operands still need `asFloat`. |
+
+Metaclasses move before the collection classes, because class-side
+constructors such as `Array new: 3` need them.
+
+- [ ] 1. Run-time class lookup, the ANSI `<Object>` protocol, and class reflection.
+- [ ] 2. Symbols, characters, cascades, literal arrays, and radix integers.
+- [ ] 3. Metaclasses.
+- [ ] 4. Strings, collections, streams, `printString`, `to:do:`, and fractions.
+- [ ] 5. The interchange format: file in and file out, class definition in the System Browser, and directory loading in Node.
+- [ ] 6. Exceptions.

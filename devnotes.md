@@ -142,5 +142,5 @@ server until the crash is fixed.
 | `package.json` requires Node 24.2 | `examples/workspace.mjs` uses `import.meta.main` |
 
 The headline of pushed commit `7181993` has 60 characters, and the user's
-rule requires fewer.  Changing it requires rewriting published history, so
-it remains until the user decides.
+rule requires fewer.  Changing it requires rewriting published history.  The
+user chose to leave it.

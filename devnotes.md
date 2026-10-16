@@ -45,6 +45,40 @@ to a model, so a live agent turn remains untested here.
 
 | Item | Detail |
 | --- | --- |
-| `npm audit` | Reports high-severity advisories in `brace-expansion` and `undici` installed by `@earendil-works/pi-coding-agent` 0.83.0.  Photoslop uses the same version. |
-| Component identity | `components/` and `server/component-store.mjs` name the identity field `catalog`, a Photoslop term.  Renaming it changes the component API. |
-| Model preferences | `server/model-runtime.mjs` contains Photoslop's preferred-model list. |
+| Model preferences | `server/model-runtime.mjs` contains Photoslop's preferred-model list.  The user accepted it. |
+| Live agent turn | No test has sent a prompt to a model from this repository. |
+
+## 2026-10-16: Audit, component namespace, and listening address
+
+`npm audit` reported three advisories, all from
+`@earendil-works/pi-coding-agent` 0.83.0.  That version pins `undici` 8.5.0,
+inside the vulnerable range 8.0.0 through 8.10.1, and `minimatch` 10.2.5,
+which installed `brace-expansion` 5.0.7.  Every Pi release from 1.0.0 pins
+`undici` 8.10.2 and `minimatch` 10.2.6.  The Pi changelog from 0.84.0 through
+1.3.0 lists no breaking change to the APIs that `server/agent.mjs` and
+`server/model-runtime.mjs` use: `createAgentSession`,
+`DefaultResourceLoader`, `SessionManager`, `SettingsManager`,
+`ModelRuntime`, custom tools, and the `text_end` and `tool_execution` events.
+The repository now pins Pi 1.3.0, and `npm audit` reports no
+vulnerabilities.  All tests pass, and a Pi session starts and closes with
+`openai-codex/gpt-5.6-sol`.  Photoslop still uses Pi 0.83.0.
+
+The component identity field `catalog` is now `namespace` in
+`components/runtime.js`, `components/values.js`, `components/jobs.js`,
+`server/component-store.mjs`, and the component test.  A namespace names the
+component store that a runtime, its references, and its installed versions
+belong to.  `describeComponentJob` no longer returns `cancelPath`, which
+named a Photoslop HTTP route.  These changes alter the component API, so
+Photoslop component records and references do not work here unchanged.
+
+The workspace server takes `--host ADDRESS`, with `127.0.0.1` as the
+default.  `server/server.mjs` checks the `Host` header only when it listens
+on a loopback address, where the check blocks DNS rebinding.  On another
+address it accepts any host name, and the WebSocket origin check remains.
+The server has no authentication, so a server on all interfaces gives
+anyone who can reach the port use of the agent, which runs on the user's
+Pi credentials, and of the database.
+
+- [x] Upgrade Pi to 1.3.0 and rerun the audit and tests.
+- [x] Rename `catalog` to `namespace` and remove `cancelPath`.
+- [x] Add `--host` and restrict the host check to loopback servers.

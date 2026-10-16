@@ -13,7 +13,10 @@ const types = {
 export function createSmallslopServer({ root, directories, index, databasePath = ':memory:', createAgent }) {
   const allowed = directories.map(directory => resolve(root, directory) + sep);
   const clients = new Set();
-  const validHost = request => [`127.0.0.1:${server.address()?.port}`, `localhost:${server.address()?.port}`].includes(request.headers.host);
+  const validHost = request => {
+    const { address, port } = server.address();
+    return !['127.0.0.1', '::1'].includes(address) || [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(request.headers.host);
+  };
   const server = createServer(async (request, response) => {
     try {
       if (!validHost(request)) { response.writeHead(403); response.end('Local host required'); return; }

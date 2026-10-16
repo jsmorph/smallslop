@@ -77,10 +77,10 @@ export function decode(value, { reference = value => value, maxBytes = 1024 * 10
 }
 
 export function validateReference(value) {
-  if (!value || ['catalog', 'runtime', 'incarnation', 'id'].some(name => typeof value[name] !== 'string' || !value[name])) {
-    throw new Error('An object reference requires catalog, runtime, incarnation, and id.');
+  if (!value || ['namespace', 'runtime', 'incarnation', 'id'].some(name => typeof value[name] !== 'string' || !value[name])) {
+    throw new Error('An object reference requires namespace, runtime, incarnation, and id.');
   }
-  return { catalog: value.catalog, runtime: value.runtime, incarnation: value.incarnation, id: value.id };
+  return { namespace: value.namespace, runtime: value.runtime, incarnation: value.incarnation, id: value.id };
 }
 
 export function referenceKey(value) {

@@ -19,22 +19,25 @@ Change methods or debugger state when the user asks for programming or repair.
 Give a concise final answer stating the completed changes and any failures. A capability question asks for an answer, rather than execution.`;
 
 if (import.meta.main) {
+  let host = '127.0.0.1';
   let port = 0;
   let databasePath = ':memory:';
   const args = process.argv.slice(2);
   while (args.length) {
     const arg = args.shift();
-    if (arg === '--port' && args.length) port = Number(args.shift());
+    if (arg === '--host' && args.length) host = args.shift();
+    else if (arg === '--port' && args.length) port = Number(args.shift());
     else if (arg === '--database' && args.length) databasePath = resolve(args.shift());
-    else throw new Error(`Unknown or incomplete option: ${arg}. Use --port PORT or --database FILE.`);
+    else throw new Error(`Unknown or incomplete option: ${arg}. Use --host ADDRESS, --port PORT, or --database FILE.`);
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer from 0 through 65535.');
   const app = createSmallslopServer({ ...options, databasePath,
     createAgent: ({ page, server, onEvent }) => createPiAgent({ cwd: root, instructions, tools: smallslopTools({ page, server }), onEvent }) });
   await new Promise((resolve, reject) => {
     app.server.once('error', reject);
-    app.server.listen(port, '127.0.0.1', () => { app.server.off('error', reject); resolve(); });
+    app.server.listen(port, host, () => { app.server.off('error', reject); resolve(); });
   });
-  console.log(`Smallslop workspace: http://127.0.0.1:${app.server.address().port}/`);
+  const shown = ['::', '0.0.0.0'].includes(host) ? 'localhost' : host.includes(':') ? `[${host}]` : host;
+  console.log(`Smallslop workspace: http://${shown}:${app.server.address().port}/`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => app.close());
 }

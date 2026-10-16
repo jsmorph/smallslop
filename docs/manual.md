@@ -147,7 +147,8 @@ agent conversation, the System Browser, the Debugger, object inspectors, a
 pane list, and an activity log.  Pane geometry and visibility belong to
 Smallslop objects, and the user and the agent operate the same objects and
 debugger.  Each request captures the focused pane, so a later focus change
-leaves the request's target intact.  `--port PORT` selects the port, and
+leaves the request's target intact.  `--host ADDRESS` selects the listening
+address, with `127.0.0.1` as the default, and `--port PORT` selects the port.
 `--database FILE` gives every page the same SQLite file in place of a
 separate in-memory database.
 
@@ -158,8 +159,12 @@ the first available model from its preference list, or the first available
 model.
 
 `server/server.mjs` serves files from listed directories and accepts one
-WebSocket at `/api/session` for each page.  It accepts only the `127.0.0.1`
-and `localhost` host names and rejects WebSockets from other origins.  Each
+WebSocket at `/api/session` for each page.  A server listening on a loopback
+address accepts only the `127.0.0.1`, `localhost`, and `[::1]` host names,
+which blocks DNS rebinding.  A server listening on another address accepts
+any host name and has no authentication, so anyone who can reach it can use
+the agent and the database.  Every server rejects WebSockets whose origin
+differs from the requested host.  Each
 connection owns a server Smallslop runtime, a database connection, and an
 agent created on the first prompt.  `ui/agent-connection.js` is the page side
 of that connection.

@@ -10,7 +10,7 @@ import { ComponentRuntime } from '../components/runtime.js';
 import { ComponentRequests } from '../components/requests.js';
 
 test('component values preserve exact data and references without reading accessors', () => {
-  const reference = { catalog: 'test', runtime: 'server', incarnation: 'first', id: 'disk' };
+  const reference = { namespace: 'test', runtime: 'server', incarnation: 'first', id: 'disk' };
   const object = {};
   const value = { integer: 9007199254740993n, missing: undefined, kind: 'integer', value: 'user data',
     floats: [-0, NaN, Infinity, -Infinity], data: Uint8Array.of(0, 255), reference: object };
@@ -52,7 +52,7 @@ test('stored source versions are repeatable, independent, and checked before loa
 test('component instances use Smallslop sends and retain execution and export failures', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-runtime-'));
   const store = new ComponentStore(directory, 'test');
-  const runtime = new ComponentRuntime({ catalog: 'test', name: 'server', source: async version => {
+  const runtime = new ComponentRuntime({ namespace: 'test', name: 'server', source: async version => {
     const source = await store.source(version); return { ...source, loadUrl: source.fileUrl };
   } });
   try {
@@ -144,7 +144,7 @@ test('request waiters reject when an unused reservation expires', async () => {
 test('cancelled component work stays owned and cleanup failures remain inspectable', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-lifecycle-'));
   const store = new ComponentStore(directory, 'test');
-  const runtime = new ComponentRuntime({ catalog: 'test', name: 'server', maxActive: 1, maxCalls: 2,
+  const runtime = new ComponentRuntime({ namespace: 'test', name: 'server', maxActive: 1, maxCalls: 2,
     source: async version => { const source = await store.source(version); return { ...source, loadUrl: source.fileUrl }; } });
   try {
     const installed = await store.install({ manifest: { name: 'lifecycle', target: 'server', interface: { className: 'Lifecycle',
@@ -186,7 +186,7 @@ export function create(config, context) {
 test('bad component source and constructors retain diagnostic records', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-failures-'));
   const store = new ComponentStore(directory, 'test');
-  const runtime = new ComponentRuntime({ catalog: 'test', name: 'server', source: async version => {
+  const runtime = new ComponentRuntime({ namespace: 'test', name: 'server', source: async version => {
     const source = await store.source(version); return { ...source, loadUrl: source.fileUrl };
   } });
   try {
@@ -212,14 +212,14 @@ test('construction, disposal, and delayed reconnection preserve instance lifetim
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-concurrency-'));
   const store = new ComponentStore(directory, 'test');
   let bindingCheck;
-  const runtime = new ComponentRuntime({ catalog: 'test', name: 'server',
+  const runtime = new ComponentRuntime({ namespace: 'test', name: 'server',
     source: async version => { const source = await store.source(version); return { ...source, loadUrl: source.fileUrl }; },
     remote: async () => {
       if (bindingCheck) { bindingCheck.started.resolve(); await bindingCheck.done.promise; }
       return { status: 'ready', messages: { value: {} } };
     },
   });
-  const dependency = { catalog: 'test', runtime: 'browser-test', incarnation: 'one', id: 'first' };
+  const dependency = { namespace: 'test', runtime: 'browser-test', incarnation: 'one', id: 'first' };
   let module;
   try {
     const installed = await store.install({ manifest: { name: 'concurrent-lifetime', target: 'server',
@@ -264,7 +264,7 @@ export async function create() {
 test('workspace registrations preserve identity and guard calls, bindings, and owner disposal', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-workspace-component-'));
   const store = new ComponentStore(directory, 'test');
-  const runtime = new ComponentRuntime({ catalog: 'test', name: 'browser-test',
+  const runtime = new ComponentRuntime({ namespace: 'test', name: 'browser-test',
     source: async version => { const source = await store.source(version); return { ...source, loadUrl: source.fileUrl }; } });
   const klass = runtime.runtime.defineClass('Draft', { slots: ['service'] });
   const wrapper = runtime.runtime.newObject(klass);
@@ -305,7 +305,7 @@ test('local observations follow binding changes and retain callback work and err
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-observation-'));
   const store = new ComponentStore(directory, 'test');
   const failures = [];
-  const runtime = new ComponentRuntime({ catalog: 'test', name: 'browser-test', failed: error => failures.push(error),
+  const runtime = new ComponentRuntime({ namespace: 'test', name: 'browser-test', failed: error => failures.push(error),
     source: async version => { const source = await store.source(version); return { ...source, loadUrl: source.fileUrl }; } });
   try {
     const klass = runtime.runtime.defineClass('ObservedDraft', { slots: ['service'] });
@@ -353,13 +353,13 @@ test('local observations follow binding changes and retain callback work and err
 });
 
 test('successful release preserves pauses, failures, debugger inspection, and explicit retention', async () => {
-  const runtime = new ComponentRuntime({ catalog: 'test', name: 'browser-test', maxCalls: 4 });
+  const runtime = new ComponentRuntime({ namespace: 'test', name: 'browser-test', maxCalls: 4 });
   let waiting = Promise.withResolvers();
   const klass = runtime.runtime.defineClass('ReleaseTest', { slots: ['service'] });
   const target = runtime.register({ id: 'release-test', wrapper: runtime.runtime.newObject(klass), workspace: { kind: 'test', id: 'release-test' },
     messages: { read: { method: 'read', arity: 0 }, wait: { method: 'wait', arity: 0 }, fail: { method: 'fail', arity: 0 } },
     object: { read: () => 42n, wait: () => waiting.promise, fail() { throw new Error('Read failed.'); } } }).reference;
-  const remote = new ComponentRuntime({ catalog: 'test', name: 'browser-caller', remote: request => runtime.dispatch(request) });
+  const remote = new ComponentRuntime({ namespace: 'test', name: 'browser-caller', remote: request => runtime.dispatch(request) });
   const options = { releaseOnSuccess: true };
   try {
     for (let i = 0; i < 12; i++) {
@@ -424,7 +424,7 @@ test('successful release preserves pauses, failures, debugger inspection, and ex
 test('saved component source and declared state reconstruct exact versions', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-saved-'));
   const store = new ComponentStore(directory, 'test');
-  const createRuntime = () => new ComponentRuntime({ catalog: 'test', name: 'server', source: async version => {
+  const createRuntime = () => new ComponentRuntime({ namespace: 'test', name: 'server', source: async version => {
     const source = await store.source(version); return { ...source, loadUrl: source.fileUrl };
   } });
   const first = createRuntime(), second = createRuntime();

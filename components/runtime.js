@@ -3,12 +3,12 @@ import { checkSize, decode, encode, errorData, referenceKey, validateReference }
 import { selectorParts, validateManifest } from './manifest.js';
 
 export class ComponentRuntime {
-  constructor({ catalog, name, incarnation = crypto.randomUUID(), host, debugger: debugger_, source, remote,
+  constructor({ namespace, name, incarnation = crypto.randomUUID(), host, debugger: debugger_, source, remote,
     maxActive = 256, maxCalls = 1024, changed = () => {}, failed = () => {} }) {
     if (![maxActive, maxCalls].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error('Call limits must be positive integers.');
     this.maxActive = maxActive;
     this.maxCalls = maxCalls;
-    this.identity = { catalog, runtime: name, incarnation };
+    this.identity = { namespace, runtime: name, incarnation };
     this.runtime = host?.runtime ?? new Runtime();
     this.runner = host?.runner ?? new ProcessRunner(this.runtime);
     this.host = host ?? new Host(this.runtime, this.runner);
@@ -36,7 +36,7 @@ export class ComponentRuntime {
 
   local(reference) {
     validateReference(reference);
-    return ['catalog', 'runtime', 'incarnation'].every(key => reference[key] === this.identity[key]);
+    return ['namespace', 'runtime', 'incarnation'].every(key => reference[key] === this.identity[key]);
   }
 
   get(reference) {

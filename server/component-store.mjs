@@ -6,9 +6,9 @@ import { canonical, filePath, validateManifest } from '../components/manifest.js
 import { checkSize, decode } from '../components/values.js';
 
 export class ComponentStore {
-  constructor(directory, catalog) {
+  constructor(directory, namespace) {
     this.directory = directory;
-    this.catalog = catalog;
+    this.namespace = namespace;
   }
 
   versionPath(version) {
@@ -49,8 +49,8 @@ export class ComponentStore {
   }
 
   describe(version, manifest) {
-    return { version, manifest, catalog: this.catalog,
-      url: `/components/${this.catalog}/versions/${version}/${manifest.entry}`,
+    return { version, manifest, namespace: this.namespace,
+      url: `/components/${this.namespace}/versions/${version}/${manifest.entry}`,
       fileUrl: pathToFileURL(path.join(this.versionPath(version), manifest.entry)).href };
   }
 

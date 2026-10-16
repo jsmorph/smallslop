@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import { Runtime, fileOut } from '../src/index.js';
 import { loadSources } from '../src/sources.js';
 import { readPackage, readPackageSync, sourceVersion, writeSourceFile } from '../server/source-files.mjs';
+import { createSmallslopServer } from '../server/server.mjs';
+import { SourceStore } from '../ui/sources.js';
+import { readFileSync } from 'node:fs';
 
 const kernel = readPackageSync('kernel');
 const header = "Smalltalk interchangeVersion: '1.0'!\n";
@@ -88,6 +91,84 @@ test('source packages read with versions, and writes check the version they repl
     assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'four');
     assert.throws(() => readPackageSync('../user', root), error => error.status === 400);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the Web server serves packages and writes a source file only over the version it replaces', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
+  const app = createSmallslopServer({ root: process.cwd(), directories: ['src'], index: '/src/index.js', sourceRoot: root });
+  try {
+    await mkdir(join(root, 'user'));
+    await writeFile(join(root, 'user', 'Being.st'), 'one');
+    await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${app.server.address().port}/api/smalltalk/`;
+    const [being] = await (await fetch(`${base}user`)).json();
+    assert.deepEqual(being, { name: 'Being.st', text: 'one', version: sourceVersion('one') });
+    assert.equal((await fetch(`${base}missing`)).status, 404);
+    const put = (path, body, headers) => fetch(`${base}${path}`, { method: 'PUT', body, headers });
+    let response = await put('user/Being.st', 'two', { 'If-Match': `"${being.version}"` });
+    assert.deepEqual([response.status, response.headers.get('ETag')], [204, `"${sourceVersion('two')}"`]);
+    response = await put('user/Being.st', 'three', { 'If-Match': `"${being.version}"` });
+    assert.deepEqual([response.status, response.headers.get('ETag')], [412, `"${sourceVersion('two')}"`]);
+    assert.equal((await put('user/Being.st', 'three', {})).status, 428);
+    assert.equal((await put('user/Being.st', 'three', { 'If-Match': 'unquoted' })).status, 400);
+    assert.equal((await put('user/Being.st', 'three', { 'If-Match': `"${sourceVersion('two')}"`, Origin: 'http://elsewhere.example' })).status, 403);
+    assert.equal((await put('user/bad name.st', 'x', { 'If-None-Match': '*' })).status, 400);
+    assert.equal((await put('nowhere/Being.st', 'x', { 'If-None-Match': '*' })).status, 404);
+    assert.equal((await put('user/Animal.st', 'new', { 'If-None-Match': '*' })).status, 204);
+    assert.equal((await put('user/Animal.st', 'again', { 'If-None-Match': '*' })).status, 412);
+    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'two');
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the page source store writes changed classes and stops at a conflicting file', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
+  const app = createSmallslopServer({ root: process.cwd(), directories: ['src'], index: '/src/index.js', sourceRoot: root });
+  const reports = [];
+  let store;
+  try {
+    await mkdir(join(root, 'user'));
+    await writeFile(join(root, 'user', 'Being.st'), header + definition('Being'));
+    await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    const base = new URL(`http://127.0.0.1:${app.server.address().port}/api/smalltalk/`);
+    const runtime = new Runtime({ sources: kernel });
+    const packages = { user: readPackageSync('user', root) };
+    loadSources(runtime, packages.user);
+    store = new SourceStore({ runtime, packages, report: error => reports.push(error.message), base, defaultPackage: 'user' });
+    const being = runtime.classes.get('Being');
+
+    runtime.installSource(being, 'kind ^#being', { protocol: 'accessing' });
+    await store.settled();
+    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), fileOut(being));
+
+    const animal = runtime.defineClass('Animal', { superclass: being, category: 'Test' });
+    runtime.installSource(animal, 'sound ^#none');
+    await store.settled();
+    assert.throws(() => readFileSync(join(root, 'user', 'Animal.st')), /ENOENT/);
+    store.adopt(animal);
+    await store.settled();
+    assert.equal(await readFile(join(root, 'user', 'Animal.st'), 'utf8'), fileOut(animal));
+
+    runtime.primitive(being, 'native', 0, () => 1n);
+    runtime.installSource(being, 'kind ^#being');
+    await store.settled();
+    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), fileOut(being));
+
+    await writeFile(join(root, 'user', 'Being.st'), 'edited elsewhere');
+    runtime.installSource(being, 'kind ^#changed');
+    runtime.installSource(being, 'other ^1');
+    await store.settled();
+    runtime.installSource(being, 'third ^3');
+    await store.settled();
+    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'edited elsewhere');
+    assert.deepEqual(reports, ["user/Being.st changed on the server after this page read it.  The page's changes to Being are not saved.  Reload the page to load the current file."]);
+  } finally {
+    store?.dispose();
+    await app.close();
     await rm(root, { recursive: true, force: true });
   }
 });

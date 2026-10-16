@@ -25,6 +25,13 @@ opens the [disk-usage components](components.md#the-disk-example).
 | `--port PORT` | `0`, which selects a free port | Listening port |
 | `--database FILE` | `:memory:` | SQLite database.  With the default, each page connection has its own empty database. |
 | `--components DIRECTORY` | `.local/components` in the repository | Component store |
+| `--sources DIRECTORY` | `smalltalk` in the repository | Root of the [source packages](manual.md#source-packages) that the page and server runtimes load and the page writes |
+
+The page saves each change to a class in its runtime, from the System Browser,
+the Debugger, the agent, or File in, to that class's file under the sources
+directory.  With the default, the page writes the repository's own source
+files, and git shows the changes.  A class that the System Browser defines or
+files in goes to the `workspace` package.
 
 The agent requires a Pi model credential: a login stored in Pi's `auth.json`,
 or a provider key in the environment, such as `OPENAI_API_KEY`.  The server
@@ -241,8 +248,15 @@ session, stops the HTTP server, and closes the component service.
 | `databasePath` | SQLite file for each session's server runtime.  The default, `:memory:`, gives each session a separate database. |
 | `createAgent` | Function that creates a session's agent |
 | `components` | Optional `{directory, namespace}` for a [component service](components.md#hosting-components) |
+| `sourceRoot` | Directory of the [source packages](manual.md#source-packages).  The default is the repository's `smalltalk` directory. |
 
-The server answers only `GET`.  It serves files with the extensions `.html`,
+The server answers `GET`, and `PUT` for source files.  `GET
+/api/smalltalk/PACKAGE` returns the package's files as JSON
+`{name, text, version}` records.  `PUT /api/smalltalk/PACKAGE/Class.st`
+replaces a file when `If-Match` holds its current version in quotes, or
+creates it with `If-None-Match: *`.  It answers 204 with the new version as
+`ETag`, 412 with the current version when the file changed, and 428 without a
+precondition.  Other requests return 405.  It serves files with the extensions `.html`,
 `.js`, `.mjs`, `.css`, `.json`, `.svg`, `.png`, and `.jpg` from the listed
 directories, and it serves installed component files at
 `/components/NAMESPACE/versions/VERSION/FILE`.  A malformed path returns 400,
@@ -263,12 +277,14 @@ accepts only loopback host names: `127.0.0.1`, `localhost`, `[::1]`, and its
 own address, each with its port.  This check blocks DNS rebinding from other
 sites.  The server rejects a WebSocket whose `Origin` is present and differs
 from `http://` or `https://` followed by the requested host.  Browsers always
-send `Origin`, and programs other than browsers can omit it.
+send `Origin`, and programs other than browsers can omit it.  The same
+`Origin` rule applies to `PUT` requests for source files.
 
 The server has no authentication, and on a non-loopback address it accepts any
 host name.  Anyone who can reach the port can then use the agent with your Pi
-credential, run SQL against the session database, and install and run server
-components, which execute JavaScript with the server user's permissions.
+credential, run SQL against the session database, rewrite the source files,
+and install and run server components, which execute JavaScript with the
+server user's permissions.
 Listen on another address only on a network where every user may do those
 things.
 
@@ -333,5 +349,9 @@ test sends a prompt to a model.
 
 The conversation lives in server memory and ends when the page disconnects or
 the server stops.  Each page connection has one agent and one turn at a time.
+Changes in the server runtime, such as methods installed through the Debugger's
+Server realm, are not saved to source files.  When another page or program
+changes a class's file after a page read it, that page stops saving the class
+and reports the conflict in Activity until it reloads.
 A page command that runs longer than 30 seconds, such as a slow inspector
 evaluation, fails its tool call.

@@ -57,6 +57,7 @@ export class Runtime {
     this.processes = new Map();
     this.breakpoints = new Map();
     this.stopOnSignal = false;
+    this.observers = new Set();
     this.nextId = 1;
     this.identityHashes = new WeakMap();
     this.nextIdentityHash = 1;
@@ -97,7 +98,17 @@ export class Runtime {
     klass.metaclass = new SmallClass(this, `${name} class`, superclass?.metaclass ?? this.classes.get('Class') ?? null, classSlots, category, klass);
     klass.slotValues = Object.fromEntries(klass.metaclass.slots.map(slot => [slot, null]));
     this.classes.set(name, klass);
+    this.#changed(klass);
     return klass;
+  }
+
+  subscribe(listener) {
+    this.observers.add(listener);
+    return () => this.observers.delete(listener);
+  }
+
+  #changed(klass) {
+    for (const listener of this.observers) listener(klass.instanceClass ?? klass);
   }
 
   redefineClass(klass, { superclass = klass.superclass, slots, classSlots, category = klass.category }) {
@@ -140,6 +151,7 @@ export class Runtime {
       throw error;
     }
     klass.category = klass.metaclass.category = category;
+    this.#changed(klass);
     const failures = [];
     if (!layoutChanged) return failures;
     for (const { klass: current } of affected) {
@@ -252,6 +264,7 @@ export class Runtime {
     const method = Object.freeze({ id: this.nextId++, owner: klass, selector, protocol, ...body });
     klass.methods.set(selector, method);
     this.methods.set(method.id, method);
+    this.#changed(klass);
     return method;
   }
 

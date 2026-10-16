@@ -6,8 +6,9 @@ import { acceptWebSocket } from './ws.mjs';
 import { ServerWorld } from './world.mjs';
 import { ComponentService } from './component-service.mjs';
 import { errorData } from '../components/values.js';
-import { readPackage, sourceRoot as defaultSourceRoot } from './source-files.mjs';
+import { readPackage, sourceRoot as defaultSourceRoot, writeSourceFile } from './source-files.mjs';
 
+const maxSourceBytes = 4 * 1024 * 1024;
 const loopback = address => address === '::1' || /^(::ffff:)?127\./.test(address);
 const remoteError = data => Object.assign(new Error(typeof data?.message === 'string' ? data.message : 'The peer reported an invalid error.'),
   data && typeof data === 'object' ? data : {});
@@ -28,11 +29,39 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     const names = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`];
     return !loopback(address) || names.includes(request.headers.host);
   };
+  const sameOrigin = request => !request.headers.origin
+    || [`http://${request.headers.host}`, `https://${request.headers.host}`].includes(request.headers.origin);
+  const putSource = async (request, response, packageName, file) => {
+    if (!sameOrigin(request)) { response.writeHead(403); response.end('Same origin required'); return; }
+    const match = request.headers['if-match'];
+    const absent = request.headers['if-none-match'] === '*';
+    if (!match === !absent) { response.writeHead(428, { 'Content-Type': 'text/plain' }); response.end('Send If-Match with the version read, or If-None-Match: * for a new file.'); return; }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > maxSourceBytes) { response.writeHead(413, { 'Content-Type': 'text/plain' }); response.end('Source file too large'); return; }
+      chunks.push(chunk);
+    }
+    const expected = absent ? null : /^"([A-Za-z0-9_-]+)"$/.exec(match)?.[1];
+    if (expected === undefined) { response.writeHead(400, { 'Content-Type': 'text/plain' }); response.end('Invalid If-Match header'); return; }
+    try {
+      const version = await writeSourceFile(sourceRoot, packageName, file, Buffer.concat(chunks).toString('utf8'), expected);
+      response.writeHead(204, { ETag: `"${version}"` });
+      response.end();
+    } catch (error) {
+      if (error.status !== 412) throw error;
+      response.writeHead(412, { 'Content-Type': 'text/plain', ...(error.version ? { ETag: `"${error.version}"` } : {}) });
+      response.end(error.message);
+    }
+  };
   const server = createServer(async (request, response) => {
     try {
       if (!validHost(request)) { response.writeHead(403); response.end('Local host required'); return; }
       const { pathname } = new URL(request.url, 'http://localhost');
       const sources = /^\/api\/smalltalk\/([^/]+)$/.exec(pathname);
+      const sourceFile = /^\/api\/smalltalk\/([^/]+)\/([^/]+)$/.exec(pathname);
+      if (sourceFile && request.method === 'PUT') { await putSource(request, response, sourceFile[1], sourceFile[2]); return; }
       if (request.method !== 'GET') { response.writeHead(405); response.end('GET required'); return; }
       if (sources) {
         const files = await readPackage(sources[1], sourceRoot);

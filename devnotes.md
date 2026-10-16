@@ -254,5 +254,12 @@ primitives a runtime has installed.  The example programs and component
 classes keep building classes through the JavaScript API.
 
 - [x] Generate the files and load every runtime from them.
-- [ ] Write a class's file after each change in the page runtime, with a
+- [x] Write a class's file after each change in the page runtime, with a
   version check against concurrent writers.
+
+The page writes with HTTP `PUT`, `If-Match`, and `If-None-Match: *`, and the
+server answers 412 when the file changed
+([RFC 9110, section 13.1](https://www.rfc-editor.org/rfc/rfc9110#section-13.1)).
+After a conflict, the page stops saving that class until it reloads, because
+merging two versions of a class needs a person.  Changes in the server
+runtime are not saved yet.

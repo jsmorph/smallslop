@@ -580,6 +580,20 @@ console.log(loadSources(runtime, readPackageSync('tools')).classes);
 
 The output is `[ 'Inspector' ]`.
 
+`runtime.subscribe(listener)` calls `listener(klass)` after a class is
+defined or redefined and after a method is installed in the class or its
+metaclass, and returns a function that ends the subscription.  `SourceStore`
+in [`ui/sources.js`](../ui/sources.js) uses it to save a page runtime's
+changes.  It records the package and version of each class loaded from a
+package.  After a change, it writes `fileOut(klass)` with a `PUT` to the
+page's server, when the text differs from the saved text.  `adopt(klass,
+packageName)` gives a new class a file, in the `workspace` package by default.
+A class with no file, such as a component class, is not saved.  When the
+server answers 412, the store reports the conflict, stops saving that class,
+and leaves the file as it is.  `createWorkspace` creates the store as
+`workspace.sources`, and the System Browser adopts the classes it defines or
+files in.
+
 ## Exceptions
 
 Smallslop implements the exception protocols of ANSI section 5.5.  `[...]
@@ -1207,12 +1221,12 @@ registers later.
 | `container` | Element that holds the panes |
 | `toolbar` | Element that receives the workspace buttons |
 | `definitions` | Pane definitions to register at creation |
-| `sources` | The `kernel`, `tools`, and `workspace` packages from `fetchSources` |
+| `sources` | The `kernel`, `tools`, and `workspace` packages from `fetchSources`.  The workspace saves its classes to them (see [Source packages](#source-packages)). |
 | `storage`, `storageKey` | A `Storage` object, such as `localStorage`, and the key for the saved arrangement |
 | `onChange` | Function called after pane changes |
 
-The returned object has `world`, `dispatch(request)`, `add(definition)`,
-`report(error)`, `state()`, and `dispose()`.  `world` holds the pane runtime,
+The returned object has `world`, `sources`, `dispatch(request)`,
+`add(definition)`, `report(error)`, `state()`, and `dispose()`.  `world` holds the pane runtime,
 its host, its debugger adapter, and its panes.  `dispatch` runs a workspace
 command, and `add` registers a pane after creation.  `report` records an error
 in the Activity pane.

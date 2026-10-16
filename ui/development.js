@@ -26,7 +26,7 @@ export function createWorkspaceDevelopment(workspace, { server } = {}) {
     } }
     finally { refreshing = false; }
   };
-  const adapter = { runtime: world.runtime, host: world.host, inspector: world.debugger, inspectors, touch: refresh, server,
+  const adapter = { runtime: world.runtime, host: world.host, inspector: world.debugger, inspectors, touch: refresh, server, sources: workspace.sources,
     dispatch: request => request.op === 'methods' ? world.debugger.methods({}).filter(method => method.format === 'source') : execute(request) };
   const perform = action => Promise.resolve().then(action).then(refresh).catch(report);
   const options = { world: adapter, element, perform, command: request => execute(request) };

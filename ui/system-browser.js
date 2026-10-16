@@ -93,12 +93,14 @@ export class BrowserService {
     const elements = parseInterchangeElements(text);
     if (elements.length !== 1 || elements[0].type !== 'class') throw new Error('Accept one class definition, followed by its annotations.');
     const { klass, failures } = defineClassElement(this.runtime, elements[0]);
+    this.world.sources?.adopt(klass);
     return { className: klass.name, message: [`Defined ${klass.name}`,
       ...failures.map(({ className, selector, message }) => `${className}>>${selector} failed to recompile: ${message}`)].join('. ') };
   }
 
   fileIn(text) {
     const { classes, methods, failures } = fileIn(this.runtime, text);
+    for (const name of classes) this.world.sources?.adopt(this.runtime.classes.get(name));
     const count = (items, noun) => `${items.length} ${noun}${items.length === 1 ? '' : noun.endsWith('s') ? 'es' : 's'}`;
     return [`Filed in ${count(classes, 'class')} and ${count(methods, 'method')}`,
       ...failures.map(({ className, selector, source, message }) => `${className}>>${selector ?? source.split('\n')[0]} failed: ${message}`)].join('. ');

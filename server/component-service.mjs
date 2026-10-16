@@ -6,6 +6,8 @@ import { ComponentRequests } from '../components/requests.js';
 import { describeComponentJob } from '../components/jobs.js';
 import { referenceKey, validateReference } from '../components/values.js';
 
+const queries = new Set(['runtimes.describe', 'modules.list', 'modules.source', 'snapshots.read', 'snapshots.list', 'jobs.list', 'jobs.inspect', 'debug.javascript']);
+
 export class ComponentService {
   constructor({ directory, namespace, maxActive = 256, maxCompleted = 1024 }) {
     if (typeof namespace !== 'string' || !/^[a-z][a-z0-9-]*$/.test(namespace)) throw new Error('A component namespace requires lowercase letters, digits, and hyphens.');
@@ -22,7 +24,7 @@ export class ComponentService {
   server() {
     if (!this.process) this.process = new ComponentProcess({ directory: this.store.directory, namespace: this.namespace,
       remote: request => this.invoke(request), changed: event => {
-        if (event.type === 'instance') this.instances.set(referenceKey(event.reference), event);
+        if (event.type === 'instance') this.remember(event);
         if (event.type === 'call') {
           this.progress.get(event.id)?.(event);
           if (event.job) { this.jobs.set(event.id, event); this.trimJobs(); }
@@ -34,6 +36,16 @@ export class ComponentService {
         }
       } });
     return this.process;
+  }
+
+  remember(instance) {
+    const key = referenceKey(instance.reference);
+    if (instance.status === 'disposed') this.instances.delete(key);
+    else this.instances.set(key, instance);
+  }
+
+  forgetRuntime(name) {
+    for (const [key, instance] of this.instances) if (instance.reference.runtime === name) this.instances.delete(key);
   }
 
   listJobs() { return [...this.jobs.values()].map(describeComponentJob); }
@@ -65,12 +77,16 @@ export class ComponentService {
   pageRuntime(page) { return [...this.browsers.values()].find(browser => browser.page === page)?.identity; }
 
   async register({ identity, page }) {
-    if (!page) throw new Error('A browser runtime requires a connected page.');
+    if (!page?.connected()) throw new Error('A browser runtime requires a connected page.');
     if (!identity || identity.namespace !== this.namespace || !identity.runtime?.startsWith('browser-') || typeof identity.incarnation !== 'string') throw new Error('Invalid browser component runtime.');
     for (const [name, browser] of this.browsers) if (browser.page === page && name !== identity.runtime) await this.removeBrowser(name);
     const previous = this.browsers.get(identity.runtime);
-    if (previous && (previous.page !== page || previous.identity.incarnation !== identity.incarnation)) throw new Error('Browser runtime identity is already registered.');
-    this.browsers.set(identity.runtime, previous ?? { identity, page, debugger: null });
+    if (previous && previous.identity.incarnation !== identity.incarnation) throw new Error('Browser runtime identity is already registered.');
+    if (!page.connected()) throw new Error('A browser runtime requires a connected page.');
+    // The runtime name and incarnation are random, so a matching identity
+    // from another connection is the same page after a reconnect.
+    if (previous) previous.page = page;
+    else this.browsers.set(identity.runtime, { identity, page, debugger: null, attaching: false });
     return this.describe();
   }
 
@@ -81,8 +97,10 @@ export class ComponentService {
   async removeBrowser(name) {
     const browser = this.browsers.get(name);
     this.browsers.delete(name);
-    for (const instance of this.instances.values()) if (instance.reference.runtime === name) instance.status = 'unavailable';
-    await browser.debugger?.close();
+    this.forgetRuntime(name);
+    const debugger_ = browser.debugger;
+    browser.debugger = null;
+    await debugger_?.close();
   }
 
   submit(request, { page, id = this.requests.reserve().id } = {}) {
@@ -104,25 +122,31 @@ export class ComponentService {
 
   async dispatch(request, { page } = {}) {
     switch (request.op) {
-      case 'runtimes.describe': return this.describe();
       case 'runtimes.register': return this.register({ identity: request.identity, page });
       case 'requests.reserve': return this.requests.reserve();
       case 'requests.inspect': return this.requests.inspect(request.id);
       case 'requests.wait': return this.requests.wait(request.id, request.revision);
       case 'requests.release': return this.requests.release(request.id);
       case 'requests.submit': return this.submit(request.request, { id: request.id, page });
+      default: return queries.has(request.op) ? this.query(request, this.pageRuntime(page)) : this.submit(request, { page });
+    }
+  }
+
+  query(request, pageRuntime) {
+    switch (request.op) {
+      case 'runtimes.describe': return this.describe();
       case 'modules.list': return this.store.list();
       case 'modules.source': return this.store.source(request.version);
       case 'snapshots.read': return this.store.snapshot(request.id);
       case 'snapshots.list': return this.store.snapshots();
       case 'jobs.list': return this.listJobs();
       case 'jobs.inspect': return describeComponentJob(this.job(request.id));
-      case 'debug.javascript': return this.javascript({ ...request, runtime: request.runtime === 'page' ? this.pageRuntime(page)?.runtime : request.runtime });
-      default: return this.submit(request, { page });
+      case 'debug.javascript': return this.javascript({ ...request, runtime: request.runtime === 'page' ? pageRuntime?.runtime : request.runtime });
     }
   }
 
   async run(request, id, progress) {
+    if (queries.has(request.op)) return this.query(request, request.pageRuntime);
     if (request.op === 'modules.install') return this.store.install(request);
     if (request.op === 'jobs.cancel') {
       const call = this.job(request.id);
@@ -151,9 +175,11 @@ export class ComponentService {
       return this.describe();
     }
     if (request.op === 'runtimes.restart') {
-      if (!this.process || request.expectedIncarnation !== this.process.identity.incarnation) throw new Error('Server runtime incarnation conflict.');
-      await this.process.close(); this.process = null;
-      for (const instance of this.instances.values()) if (instance.reference.runtime === 'server') instance.status = 'unavailable';
+      const previous = this.process;
+      if (!previous || request.expectedIncarnation !== previous.identity.incarnation) throw new Error('Server runtime incarnation conflict.');
+      this.process = null;
+      this.forgetRuntime('server');
+      await previous.close();
       await this.server().ready;
       return this.describe();
     }
@@ -171,11 +197,10 @@ export class ComponentService {
       for (const browser of this.browsers.values()) {
         if (browser.page.connected()) {
           const instances = await browser.page.send({ op: 'componentRuntime', identity: browser.identity, request: { op: 'objects.list' } });
-          for (const instance of instances) this.instances.set(referenceKey(instance.reference), instance);
+          for (const instance of instances) this.remember(instance);
         }
       }
-      const consumers = [...this.instances.values()].filter(instance => !['disposed', 'unavailable'].includes(instance.status)
-        && referenceKey(instance.reference) !== referenceKey(request.target)
+      const consumers = [...this.instances.values()].filter(instance => referenceKey(instance.reference) !== referenceKey(request.target)
         && Object.values(instance.bindings ?? {}).some(binding => referenceKey(binding.target) === referenceKey(request.target)));
       if (request.op === 'objects.consumers') return consumers;
       if (consumers.length) throw new Error(`Component has consumers: ${consumers.map(instance => instance.reference.id).join(', ')}.`);
@@ -195,8 +220,8 @@ export class ComponentService {
           throw error;
         }
       }
-      if (result?.reference && result.bindings) this.instances.set(referenceKey(result.reference), result);
-      if (request.op === 'objects.list') for (const instance of result) this.instances.set(referenceKey(instance.reference), instance);
+      if (result?.reference && result.bindings) this.remember(result);
+      if (request.op === 'objects.list') for (const instance of result) this.remember(instance);
       if (request.op === 'jobs.start') return describeComponentJob(result);
       return result;
     } finally { this.progress.delete(id); }
@@ -216,8 +241,14 @@ export class ComponentService {
   async attach({ runtime, endpoint, targetId, incarnation }) {
     const browser = this.browsers.get(runtime);
     if (!browser || browser.identity.incarnation !== incarnation) throw new Error('Browser debugger incarnation conflict.');
-    if (browser.debugger) throw new Error('A debugger is already attached to this browser runtime.');
+    if (browser.debugger || browser.attaching) throw new Error('A debugger is already attached to this browser runtime.');
     if (typeof endpoint !== 'string' || typeof targetId !== 'string') throw new Error('Browser debugging requires an endpoint and target ID.');
+    browser.attaching = true;
+    try { return await this.connectDebugger(browser, endpoint, targetId); }
+    finally { browser.attaching = false; }
+  }
+
+  async connectDebugger(browser, endpoint, targetId) {
     const response = await fetch(`${endpoint.replace(/\/$/, '')}/json/version`);
     if (!response.ok) throw new Error(`Browser debugger endpoint returned HTTP ${response.status}.`);
     const version = await response.json();
@@ -229,6 +260,7 @@ export class ComponentService {
       if (!identity || ['namespace', 'runtime', 'incarnation'].some(key => identity[key] !== browser.identity[key])) throw new Error('Browser debugger target differs from the requested component runtime.');
       const debugger_ = new JavaScriptDebugger(connection, { sessionId, sourceFilter: url => url.includes(`/components/${this.namespace}/versions/`) });
       await debugger_.enable();
+      if (this.browsers.get(browser.identity.runtime) !== browser) throw new Error('The browser runtime disconnected during attachment.');
       browser.debugger = debugger_;
       return debugger_.state();
     } catch (error) { await connection.close(); throw error; }

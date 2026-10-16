@@ -116,6 +116,11 @@ export function createWorkspaceDevelopment(workspace, { server } = {}) {
     return workspace.dispatch(request);
   }
 
-  return { execute, refresh, inspect: (value, association) => openInspection(inspectors.open(value).state(), association),
+  function serverDisconnected() {
+    for (const pane of world.panes.values()) if (pane.inspection?.runtime === 'server') pane.inspection.disconnected = true;
+    refresh();
+  }
+
+  return { execute, refresh, serverDisconnected, inspect: (value, association) => openInspection(inspectors.open(value).state(), association),
     remoteInspector: (snapshot, server) => openInspection(snapshot, null, { runtime: 'server', server }) };
 }

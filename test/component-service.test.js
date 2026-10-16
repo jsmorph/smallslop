@@ -25,6 +25,33 @@ test('the component service runs server components in a child process', { timeou
     await assert.rejects(service.invoke({ op: 'objects.list', runtime: 'page' }), /no registered component runtime/);
     await assert.rejects(service.invoke({ op: 'objects.inspect', target: { ...disk.reference, namespace: 'other' } }), /namespace/);
     assert.equal(service.describe().runtimes.find(runtime => runtime.runtime === 'server').status, 'running');
+
+    assert.deepEqual((await service.invoke({ op: 'modules.list' })).map(module => module.version), [reader.version]);
+    assert.equal((await service.invoke({ op: 'runtimes.describe' })).namespace, 'test');
+    assert.deepEqual(await service.invoke({ op: 'snapshots.list' }), []);
+
+    const job = await service.invoke({ op: 'jobs.start', target: disk.reference, selector: 'usage', args: encode([]), label: 'Disk usage', input: { path: directory } });
+    let record = job;
+    const deadline = Date.now() + 5000;
+    while (record.status === 'running') {
+      if (Date.now() > deadline) throw new Error('Timed out waiting for the job.');
+      await new Promise(resolve => setTimeout(resolve, 10));
+      record = await service.invoke({ op: 'jobs.inspect', id: job.id });
+    }
+    assert.equal(record.status, 'done');
+    assert.equal(Object.hasOwn(record, 'result'), false);
+    assert.equal(decode(record.call.result).path, directory);
+    assert.deepEqual((await service.invoke({ op: 'jobs.list' })).map(item => item.id), [job.id]);
+
+    for (const id of [call.id, job.id]) await service.invoke({ op: 'calls.release', target: disk.reference, id });
+    await service.invoke({ op: 'objects.dispose', target: disk.reference });
+    assert.equal(service.instances.size, 0);
+
+    const incarnation = service.process.identity.incarnation;
+    const restarts = await Promise.allSettled([1, 2].map(() => service.invoke({ op: 'runtimes.restart', expectedIncarnation: incarnation })));
+    assert.deepEqual(restarts.map(outcome => outcome.status).sort(), ['fulfilled', 'rejected']);
+    assert.match(restarts.find(outcome => outcome.status === 'rejected').reason.message, /incarnation conflict/);
+    assert.notEqual(service.process.identity.incarnation, incarnation);
   } finally {
     await service.close();
     await rm(directory, { recursive: true, force: true });

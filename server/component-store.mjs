@@ -74,12 +74,6 @@ export class ComponentStore {
     }));
   }
 
-  async file(version, name) {
-    const source = await this.source(version);
-    if (!Object.hasOwn(source.files, filePath(name))) throw new Error(`Unknown component file: ${name}.`);
-    return { text: source.files[name], path: path.join(this.versionPath(version), name) };
-  }
-
   snapshotPath(id) {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('Invalid component snapshot ID.');
     return path.join(this.directory, 'snapshots', id, 'record.json');

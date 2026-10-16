@@ -9,6 +9,14 @@ import { ComponentStore } from '../server/component-store.mjs';
 import { ComponentRuntime } from '../components/runtime.js';
 import { ComponentRequests } from '../components/requests.js';
 
+async function until(predicate, message, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`Timed out: ${message}`);
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+}
+
 test('component values preserve exact data and references without reading accessors', () => {
   const reference = { namespace: 'test', runtime: 'server', incarnation: 'first', id: 'disk' };
   const object = {};
@@ -95,7 +103,7 @@ test('component instances use Smallslop sends and retain execution and export fa
     const evaluation = runtime.runtime.evaluate('self add: 1. self add: 2', { receiver: instance.wrapper });
     assert.throws(() => runtime.assertIdle(instance), /active processes/);
     runtime.runner.follow(evaluation);
-    while (runtime.runtime.process(evaluation).status !== 'completed') await new Promise(resolve => setTimeout(resolve, 0));
+    await until(() => runtime.runtime.process(evaluation).status === 'completed', 'evaluation completion');
     assert.equal(runtime.host.unwrap(runtime.runtime.process(evaluation).result), beforeCount + 3n);
     assert.equal(runtime.calls.size, beforeCalls, 'Inspector expressions retain their own process, without mislabelling several sends as one component call.');
     runtime.runtime.dispose(evaluation);
@@ -160,7 +168,7 @@ export function create(config, context) {
     const created = await runtime.create({ version: installed.version });
     const instance = runtime.get(created.reference);
     const call = runtime.start({ target: created.reference, selector: 'wait' });
-    while (!instance.scope.tasks.size) await new Promise(resolve => setTimeout(resolve, 0));
+    await until(() => instance.scope.tasks.size, 'host task start');
     assert.throws(() => runtime.start({ target: created.reference, selector: 'value' }), /active call limit/);
     await runtime.dispatch({ op: 'calls.cancel', id: call.id });
     assert.equal((await runtime.completed(call.id)).status, 'cancelled');
@@ -168,7 +176,7 @@ export function create(config, context) {
     assert.throws(() => runtime.assertIdle(instance), /host tasks/);
     await assert.rejects(runtime.dispatch({ op: 'calls.release', id: call.id }), /remaining host execution/);
     instance.object.finish();
-    while (instance.scope.tasks.size) await new Promise(resolve => setTimeout(resolve, 0));
+    await until(() => !instance.scope.tasks.size, 'host task completion');
     const finished = await runtime.dispatch({ op: 'calls.inspect', id: call.id });
     assert.equal(finished.execution, 'completed');
     assert.deepEqual(finished.resultHandle, { kind: 'integer', value: '42' });
@@ -391,7 +399,7 @@ test('successful release preserves pauses, failures, debugger inspection, and ex
     const point = runtime.runtime.breakpoint(klass.methods.get('read'));
     const result = runtime.send(target, 'read', [], options);
     const call = [...runtime.calls.values()][0];
-    while (call.status !== 'paused') await new Promise(resolve => setTimeout(resolve, 1));
+    await until(() => call.status === 'paused', 'call pause');
     runtime.runtime.clearBreakpoint(point);
     await runtime.dispatch({ op: 'debug.smallslop', request: { op: 'resume', processId: call.processId } });
     assert.equal(await result, 42n);

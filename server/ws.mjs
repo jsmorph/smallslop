@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+const closeCodes = {
+  protocolError: 1002,
+  messageTooBig: 1009,
+};
+
 const opcodes = {
   binary: 0x2,
   close: 0x8,
@@ -39,8 +44,10 @@ function encodeFrame(opcode, payload) {
 }
 
 class WebSocketConnection {
-  constructor(socket) {
+  constructor(socket, { maxMessageBytes, maxBufferedBytes }) {
     this.socket = socket;
+    this.maxMessageBytes = maxMessageBytes;
+    this.maxBufferedBytes = maxBufferedBytes;
     this.buffer = Buffer.alloc(0);
     this.closed = false;
     this.fragments = null;
@@ -48,6 +55,10 @@ class WebSocketConnection {
     this.onMessage = () => {};
 
     socket.on("data", (chunk) => {
+      if (this.closed) {
+        return;
+      }
+
       this.buffer = Buffer.concat([this.buffer, chunk]);
       this.processBuffer();
     });
@@ -64,7 +75,7 @@ class WebSocketConnection {
   }
 
   processBuffer() {
-    while (true) {
+    while (!this.closed) {
       const frame = this.readFrame();
 
       if (!frame) {
@@ -77,7 +88,7 @@ class WebSocketConnection {
       }
 
       if (frame.opcode === opcodes.ping) {
-        this.socket.write(encodeFrame(opcodes.pong, frame.payload));
+        this.write(encodeFrame(opcodes.pong, frame.payload));
         continue;
       }
 
@@ -89,8 +100,13 @@ class WebSocketConnection {
       // frame without FIN, continuation frames, and a final one with
       // FIN.  Reassemble; only text messages are delivered.
       if (frame.opcode === opcodes.text || frame.opcode === opcodes.binary) {
+        if (this.fragments) {
+          this.close(closeCodes.protocolError);
+          return;
+        }
+
         if (!frame.fin) {
-          this.fragments = { opcode: frame.opcode, parts: [frame.payload] };
+          this.fragments = { opcode: frame.opcode, parts: [frame.payload], size: frame.payload.length };
           continue;
         }
 
@@ -101,21 +117,25 @@ class WebSocketConnection {
         continue;
       }
 
-      if (frame.opcode === opcodes.continuation) {
-        if (!this.fragments) {
-          this.close();
-          return;
-        }
+      if (frame.opcode !== opcodes.continuation || !this.fragments) {
+        this.close(closeCodes.protocolError);
+        return;
+      }
 
-        this.fragments.parts.push(frame.payload);
+      this.fragments.parts.push(frame.payload);
+      this.fragments.size += frame.payload.length;
 
-        if (frame.fin) {
-          const { opcode, parts } = this.fragments;
-          this.fragments = null;
+      if (this.fragments.size > this.maxMessageBytes) {
+        this.close(closeCodes.messageTooBig);
+        return;
+      }
 
-          if (opcode === opcodes.text) {
-            this.onMessage(Buffer.concat(parts).toString("utf-8"));
-          }
+      if (frame.fin) {
+        const { opcode, parts } = this.fragments;
+        this.fragments = null;
+
+        if (opcode === opcodes.text) {
+          this.onMessage(Buffer.concat(parts).toString("utf-8"));
         }
       }
     }
@@ -129,6 +149,7 @@ class WebSocketConnection {
     }
 
     const fin = (buffer[0] & 0x80) !== 0;
+    const reserved = buffer[0] & 0x70;
     const opcode = buffer[0] & 0x0f;
     const masked = (buffer[1] & 0x80) !== 0;
     let payloadLength = buffer[1] & 0x7f;
@@ -150,16 +171,26 @@ class WebSocketConnection {
       offset += 8;
     }
 
-    let maskKey = null;
+    // RFC 6455 requires masked client frames, clear reserved bits, and
+    // unfragmented control frames of at most 125 bytes.
+    const control = (opcode & 0x08) !== 0;
 
-    if (masked) {
-      if (buffer.length < offset + 4) {
-        return null;
-      }
-
-      maskKey = buffer.subarray(offset, offset + 4);
-      offset += 4;
+    if (!masked || reserved || (control && (!fin || payloadLength > 125))) {
+      this.close(closeCodes.protocolError);
+      return null;
     }
+
+    if (payloadLength > this.maxMessageBytes) {
+      this.close(closeCodes.messageTooBig);
+      return null;
+    }
+
+    if (buffer.length < offset + 4) {
+      return null;
+    }
+
+    const maskKey = buffer.subarray(offset, offset + 4);
+    offset += 4;
 
     if (buffer.length < offset + payloadLength) {
       return null;
@@ -167,14 +198,24 @@ class WebSocketConnection {
 
     const payload = Buffer.from(buffer.subarray(offset, offset + payloadLength));
 
-    if (maskKey) {
-      for (let index = 0; index < payload.length; index += 1) {
-        payload[index] ^= maskKey[index % 4];
-      }
+    for (let index = 0; index < payload.length; index += 1) {
+      payload[index] ^= maskKey[index % 4];
     }
 
     this.buffer = buffer.subarray(offset + payloadLength);
     return { fin, opcode, payload };
+  }
+
+  write(frame) {
+    this.socket.write(frame);
+
+    // A peer that stops reading would otherwise make the server buffer
+    // every later message.
+    if (this.socket.writableLength > this.maxBufferedBytes) {
+      this.closed = true;
+      this.socket.destroy();
+      this.onClose();
+    }
   }
 
   send(text) {
@@ -182,22 +223,27 @@ class WebSocketConnection {
       return;
     }
 
-    this.socket.write(encodeFrame(opcodes.text, Buffer.from(text, "utf-8")));
+    this.write(encodeFrame(opcodes.text, Buffer.from(text, "utf-8")));
   }
 
-  close() {
+  close(code) {
     if (this.closed) {
       return;
     }
 
     this.closed = true;
-    this.socket.write(encodeFrame(opcodes.close, Buffer.alloc(0)));
-    this.socket.end();
+    const payload = Buffer.alloc(code ? 2 : 0);
+
+    if (code) {
+      payload.writeUInt16BE(code);
+    }
+
+    this.socket.end(encodeFrame(opcodes.close, payload));
     this.onClose();
   }
 }
 
-export function acceptWebSocket(request, socket) {
+export function acceptWebSocket(request, socket, { maxMessageBytes = 2 * 1024 * 1024, maxBufferedBytes = 16 * 1024 * 1024 } = {}) {
   const key = request.headers["sec-websocket-key"];
 
   if (!key || request.headers.upgrade?.toLowerCase() !== "websocket") {
@@ -217,5 +263,5 @@ export function acceptWebSocket(request, socket) {
   );
 
   socket.setNoDelay(true);
-  return new WebSocketConnection(socket);
+  return new WebSocketConnection(socket, { maxMessageBytes, maxBufferedBytes });
 }

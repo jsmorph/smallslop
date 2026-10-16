@@ -62,7 +62,13 @@ export function createWorkspaceComponents({ workspace, development, request, nam
     const pane = workspace.add({ id, title: title ?? instance.module.source.manifest.interface.className, bounds, association,
       owner: instance.wrapper, description: `Installed component ${instance.module.source.manifest.name}.`, create: view(instance, id), open: true });
     panes.set(id, record);
-    await pane.view.ready();
+    try { await pane.view.ready(); }
+    catch (error) {
+      panes.delete(id);
+      await world.remove(id);
+      refreshList();
+      throw error;
+    }
     refreshList();
     return describePane(record);
   }
@@ -93,6 +99,7 @@ export function createWorkspaceComponents({ workspace, development, request, nam
     if (record.discarding) throw new Error('The component pane is being discarded.');
     if (record.revision !== expectedRevision) throw new Error('Component pane revision conflict.');
     const instance = runtime.get(record.target);
+    if (instance.mounted !== id) throw new Error('The pane does not hold its component view.');
     runtime.assertIdle(instance);
     record.discarding = true;
     try {
@@ -131,7 +138,10 @@ export function createWorkspaceComponents({ workspace, development, request, nam
       const content = element('div');
       const expanded = new Set();
       body.append(content);
+      const focusKey = node => node?.dataset?.action && [node.closest('[data-component]')?.dataset.component,
+        node.closest('[data-call]')?.dataset.call ?? '', node.dataset.action, node.dataset.binding ?? ''].join(' ');
       refreshList = () => {
+        const focused = content.contains(document.activeElement) ? focusKey(document.activeElement) : null;
         content.replaceChildren();
         for (const instance of runtime.instances.values()) {
           const state = runtime.describe(instance);
@@ -172,6 +182,7 @@ export function createWorkspaceComponents({ workspace, development, request, nam
           content.append(row);
         }
         if (!content.children.length) content.append(element('p', 'No installed component instances in this page.'));
+        if (focused) [...content.querySelectorAll('button[data-action]')].find(button => focusKey(button) === focused)?.focus();
       };
       on(content, 'click', event => {
         const summary = event.target.closest('summary');

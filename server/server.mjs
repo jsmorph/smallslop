@@ -5,6 +5,11 @@ import { extname, resolve, sep } from 'node:path';
 import { acceptWebSocket } from './ws.mjs';
 import { ServerWorld } from './world.mjs';
 import { ComponentService } from './component-service.mjs';
+import { errorData } from '../components/values.js';
+
+const loopback = address => address === '::1' || /^(::ffff:)?127\./.test(address);
+const remoteError = data => Object.assign(new Error(typeof data?.message === 'string' ? data.message : 'The peer reported an invalid error.'),
+  data && typeof data === 'object' ? data : {});
 
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -16,8 +21,11 @@ export function createSmallslopServer({ root, directories, index, databasePath =
   const allowed = directories.map(directory => resolve(root, directory) + sep);
   const clients = new Set();
   const validHost = request => {
-    const { address, port } = server.address();
-    return !['127.0.0.1', '::1'].includes(address) || [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(request.headers.host);
+    const bound = server.address();
+    if (!bound) return false;
+    const { address, port } = bound;
+    const names = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`];
+    return !loopback(address) || names.includes(request.headers.host);
   };
   const server = createServer(async (request, response) => {
     try {
@@ -25,16 +33,18 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       if (request.method !== 'GET') { response.writeHead(405); response.end('GET required'); return; }
       const { pathname } = new URL(request.url, 'http://localhost');
       if (pathname === '/') { response.writeHead(302, { Location: index }); response.end(); return; }
-      const component = /^\/components\/([a-z][a-z0-9-]*)\/versions\/([a-f0-9]{64})\/(.+)$/.exec(pathname);
+      const decoded = decodeURIComponent(pathname);
+      if (decoded.includes('\0')) { response.writeHead(400); response.end('Invalid path'); return; }
+      const component = /^\/components\/([a-z][a-z0-9-]*)\/versions\/([a-f0-9]{64})\/(.+)$/.exec(decoded);
       if (component && components?.namespace === component[1]) {
         const type = types[extname(component[3])];
-        if (!type) { response.writeHead(404); response.end('Not found'); return; }
-        const file = await components.store.file(component[2], decodeURIComponent(component[3]));
+        const source = type && await components.store.source(component[2]);
+        if (!source || !Object.hasOwn(source.files, component[3])) { response.writeHead(404); response.end('Not found'); return; }
         response.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
-        response.end(file.text);
+        response.end(source.files[component[3]]);
         return;
       }
-      const path = resolve(root, `.${decodeURIComponent(pathname)}`);
+      const path = resolve(root, `.${decoded}`);
       const type = types[extname(path)];
       if (!type || !allowed.some(prefix => path.startsWith(prefix))) { response.writeHead(404); response.end('Not found'); return; }
       const data = await readFile(path);
@@ -48,8 +58,12 @@ export function createSmallslopServer({ root, directories, index, databasePath =
   });
 
   server.on('upgrade', (request, socket) => {
-    const expectedOrigin = `http://${request.headers.host}`;
-    if (!validHost(request) || request.url !== '/api/session' || (request.headers.origin && request.headers.origin !== expectedOrigin)) {
+    // Node removes its socket error handler before emitting 'upgrade'.  A
+    // peer that resets a rejected connection then needs only cleanup.
+    socket.on('error', () => socket.destroy());
+    const origin = request.headers.origin;
+    if (!validHost(request) || request.url !== '/api/session'
+        || (origin && ![`http://${request.headers.host}`, `https://${request.headers.host}`].includes(origin))) {
       socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
       return;
     }
@@ -65,10 +79,11 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     let closed = false;
     let nextCommand = 1;
     const send = message => { if (!closed) connection.send(JSON.stringify(message)); };
-    const publish = () => send({ type: 'session', state });
+    const publish = () => send({ type: 'status', status: state.status, model: state.model });
     const append = event => {
-      state.messages.push({ ...event, id: state.messages.length + 1 });
-      publish();
+      const message = { ...event, id: state.messages.length + 1 };
+      state.messages.push(message);
+      send({ type: 'message', message });
     };
     const requestServer = async (command, signal) => {
       if (signal?.aborted) throw signal.reason;
@@ -116,7 +131,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
         return;
       }
       if (message.type === 'commandResult') {
-        pending.get(message.id)?.(message.error ? new Error(message.error) : null, message.result);
+        pending.get(message.id)?.(Object.hasOwn(message, 'error') ? remoteError(message.error) : null, message.result);
         return;
       }
       if (message.type === 'interrupt') {
@@ -134,7 +149,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
         runner = null;
         state.messages = [];
         state.status = 'Ready';
-        publish();
+        send({ type: 'session', state });
         send({ type: 'reply', id: message.id, result: state });
         return;
       }
@@ -144,6 +159,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       busy = true;
       interrupted = false;
       state.status = 'Running';
+      publish();
       append({ role: 'user', text: message.message, context: message.context });
       try {
         const agent = await getRunner();
@@ -151,6 +167,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       } catch (error) {
         if (!interrupted) {
           state.status = 'Error';
+          publish();
           append({ role: 'error', text: error.message });
           throw error;
         }
@@ -180,14 +197,14 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     connection.onClose = () => { client.dispose().catch(error => server.emit('error', error)); };
     connection.onMessage = text => {
       let message;
-      try { message = JSON.parse(text); } catch (error) { send({ type: 'error', error: error.message }); return; }
+      try { message = JSON.parse(text); } catch (error) { send({ type: 'error', error: errorData(error) }); return; }
       if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
-        send({ type: 'error', error: 'A session request requires an object and a message type.' });
+        send({ type: 'error', error: errorData(new Error('A session request requires an object and a message type.')) });
         return;
       }
-      handle(message).catch(error => send({ type: 'reply', id: message.id, error: error.message }));
+      handle(message).catch(error => send({ type: 'reply', id: message.id, error: errorData(error) }));
     };
-    publish();
+    send({ type: 'session', state });
   });
   return {
     server, components,

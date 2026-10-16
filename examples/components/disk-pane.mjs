@@ -15,13 +15,13 @@ export function create(configuration, context) {
       output.setAttribute('aria-label', 'Disk usage');
       const refresh = document.createElement('button');
       refresh.textContent = 'Refresh';
-      refresh.addEventListener('click', context.action('refresh'), { signal: context.signal });
+      refresh.addEventListener('click', context.action('refresh', { releaseOnSuccess: true }), { signal: context.signal });
       root.append(refresh, output);
       render();
     },
     async refresh() {
       const number = ++refreshNumber;
-      const next = await context.send(context.binding('disk'), 'usage');
+      const next = await context.send(context.binding('disk'), 'usage', [], { releaseOnSuccess: true });
       if (number === refreshNumber) { reading = next; render(); context.changed(); }
       return next;
     },

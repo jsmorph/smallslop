@@ -33,10 +33,14 @@ const views = new Set();
 let session = { status: 'Connecting', model: '', messages: [] };
 let development;
 let components;
+let diskPane = null;
 
 const connection = new SessionConnection({ command, session: receive, open: () => connectComponents().catch(report), error: error => {
   workspace.report(error);
-  if (!connection.connected) receive({ ...session, status: 'Disconnected' });
+  if (!connection.connected) {
+    development.serverDisconnected();
+    receive({ ...session, status: 'Disconnected' });
+  }
 } });
 const workspace = createWorkspace({
   container: document.querySelector('#workspace'),
@@ -75,7 +79,8 @@ async function connectComponents() {
 }
 
 async function openDiskExample() {
-  const { run, identity } = requireComponents();
+  const { run, identity, runtime } = requireComponents();
+  if (diskPane && runtime.instances.get(diskPane.id)?.status === 'ready') return run({ op: 'panes.open', target: diskPane });
   const source = async name => {
     const response = await fetch(new URL(`../components/${name}.mjs`, import.meta.url));
     if (!response.ok) throw new Error(`Cannot read the ${name} example: HTTP ${response.status}.`);
@@ -86,6 +91,7 @@ async function openDiskExample() {
   const view = await run({ op: 'modules.install', manifest: diskManifests.pane, files: { 'index.mjs': await source('disk-pane') } });
   const display = await run({ op: 'objects.create', runtime: identity.runtime, version: view.version,
     configuration: encode({}), bindings: { disk: disk.reference } });
+  diskPane = display.reference;
   return run({ op: 'panes.open', target: display.reference, title: 'Disk usage' });
 }
 
@@ -131,6 +137,7 @@ function agentPane() {
       send.type = 'submit';
       form.append(prompt, send);
       body.append(actions, messages, form);
+      const displayed = [];
       const submit = () => {
         const text = prompt.value.trim();
         if (!text || send.disabled) return;
@@ -153,7 +160,11 @@ function agentPane() {
         reset.disabled = busy || !connection.connected;
         reconnect.hidden = connection.connected;
         const bottom = messages.scrollTop + messages.clientHeight >= messages.scrollHeight - 30;
-        messages.replaceChildren(...session.messages.map(entry => {
+        const entries = session.messages;
+        while (messages.children.length > entries.length) messages.lastElementChild.remove();
+        displayed.length = Math.min(displayed.length, entries.length);
+        for (const [index, entry] of entries.entries()) {
+          if (displayed[index]?.id === entry.id && displayed[index]?.text === entry.text) continue;
           const node = element('article', undefined, `agent-message ${entry.role}`);
           node.append(element('span', entry.role, 'role'));
           if (['tool', 'result'].includes(entry.role)) {
@@ -161,8 +172,10 @@ function agentPane() {
             details.append(element('summary', entry.text.split(/[ :]/, 1)[0]), element('pre', entry.text));
             node.append(details);
           } else node.append(element('p', entry.text));
-          return node;
-        }));
+          const previous = messages.children[index];
+          if (previous) previous.replaceWith(node); else messages.append(node);
+          displayed[index] = { id: entry.id, text: entry.text };
+        }
         if (bottom) messages.scrollTop = messages.scrollHeight;
       };
       views.add(render);

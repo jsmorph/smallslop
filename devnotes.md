@@ -113,3 +113,20 @@ an inaccurate sentence about which modules carry debugger operations.
 - [x] Collect pending work in the limitations table, and remove history phrasing, test counts, and vague sentences.
 - [x] Check every documented option and command against the code, and run every Node example.
 - [x] Remove test counts and settled items from these notes.
+
+## 2026-10-16: Review fixes
+
+Three reviews covered the server code, the browser code and tests, and the
+documentation.  The user approved fixing every finding and stopping the
+server until the crash is fixed.
+
+- [ ] Handle socket errors on rejected upgrades, so a reset connection cannot crash the server.
+- [ ] Limit WebSocket message size, reject unmasked and malformed frames, ignore frames after close, and close connections whose unsent output exceeds a limit.
+- [ ] Let a page's component runtime register again from a new connection, and answer page commands on the socket that delivered them.
+- [ ] Send structured errors in both directions of the session protocol.
+- [ ] Answer the component service's read operations both directly and as requests.
+- [ ] Release successful disk example calls, and reuse the disk example pane.
+- [ ] Fix the lesser defects: shutdown address check, HTTP statuses, concurrent restart and attach, disconnected server inspectors, agent pane and Components pane redraws, failed mounts, saved arrangement of later panes, and the service's instance records.
+- [ ] Send conversation entries one at a time in the session protocol.
+- [ ] Add tests for each fix, deadlines for the polling loops, and a stronger System Browser assertion.
+- [ ] Correct the documentation findings and the style findings.

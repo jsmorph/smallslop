@@ -33,8 +33,9 @@ async function testAgent({ page, server, onEvent }) {
       assert.equal(context.focused, state.focused);
       if (message === 'system-browser') {
         await call('smallslop_command', { command: '{"op":"open","id":"system-browser"}' });
-        const browsed = await call('smallslop_command', { command: '{"op":"browse","action":"reveal","className":"Pane","selector":"open"}' });
-        assert.equal(browsed.selector, 'open');
+        const browsed = await call('smallslop_command', { command: '{"op":"browse","action":"reveal","className":"Inspector","selector":"select:"}' });
+        assert.equal(browsed.className, 'Inspector');
+        assert.equal(browsed.selector, 'select:');
       } else if (message === 'database') {
         const created = await call('smallslop_server', { command: '{"op":"execute","sql":"CREATE TABLE notes(text TEXT)"}' });
         assert.equal(created.process.status, 'completed');
@@ -130,7 +131,7 @@ try {
 
   await prompt(sessionId, 'system-browser');
   await until(sessionId, `${idle} && smallslop.workspace.world.panes.get('system-browser').object.slots.visible`);
-  assert.equal(await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'state'}).className`), 'Pane');
+  assert.equal(await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'state'}).className`), 'Inspector');
   assert.ok(await evaluate(sessionId, `[...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished system-browser.'))`));
 
   await prompt(sessionId, 'database');
@@ -156,6 +157,22 @@ try {
   await prompt(sessionId, 'components');
   await until(sessionId, `${idle} && [...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished components.'))`);
 
+  const paneTitled = title => `[...smallslop.workspace.world.panes.values()].find(pane => pane.object.slots.title === '${title}')`;
+  const diskText = `${paneTitled('Disk usage')}.view.body.querySelector('pre').textContent`;
+  const before = await evaluate(sessionId, diskText);
+  await evaluate(sessionId, `smallslop.connection.socket.close()`);
+  await until(sessionId, `document.querySelector('#connection-status').textContent === 'Agent: Disconnected'`);
+  await until(sessionId, `${paneTitled('Inspector: Database')}.view.body.textContent.includes('Server disconnected')`);
+  await evaluate(sessionId, `[...smallslop.workspace.world.panes.get('agent').view.body.querySelectorAll('button')].find(button => button.textContent === 'Reconnect').click()`);
+  await until(sessionId, idle);
+  await evaluate(sessionId, `document.querySelector('#disk-example').click()`);
+  await until(sessionId, `[...smallslop.workspace.world.panes.values()].filter(pane => pane.object.slots.title === 'Disk usage').length === 1 && ${paneTitled('Disk usage')}.object.slots.visible`);
+  await evaluate(sessionId, `${paneTitled('Disk usage')}.view.body.querySelector('button').click()`);
+  await until(sessionId, `${diskText} !== ${JSON.stringify(before)}`);
+  assert.equal(await evaluate(sessionId, `smallslop.components.runtime.calls.size`), 0);
+  await prompt(sessionId, 'components');
+  await until(sessionId, `${idle} && [...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished components.'))`);
+
   await prompt(sessionId, 'hold');
   await until(sessionId, `document.querySelector('#connection-status').textContent === 'Agent: Running'`);
   await evaluate(sessionId, `[...smallslop.workspace.world.panes.get('agent').view.body.querySelectorAll('button')].find(button => button.textContent === 'Stop').click()`);
@@ -163,9 +180,10 @@ try {
 
   await evaluate(sessionId, `[...smallslop.workspace.world.panes.get('agent').view.body.querySelectorAll('button')].find(button => button.textContent === 'Reset').click()`);
   await until(sessionId, `${idle} && document.querySelectorAll('.agent-message').length === 0`);
-  assert.deepEqual(await evaluate(sessionId, `smallslop.workspace.state().activity`), []);
+  assert.deepEqual(await evaluate(sessionId, `smallslop.workspace.state().activity.map(entry => entry.message)`),
+    ['The session connection closed. Reconnect to start a new session.']);
   assert.ok(calls.some(call => call.name === 'smallslop_server'));
-  console.log('Chromium passed the workspace agent, page command, server database, component, interrupt, and reset tests.');
+  console.log('Chromium passed the workspace agent, page command, server database, component, reconnect, interrupt, and reset tests.');
 } finally {
   const exit = browser?.exitCode === null ? new Promise(resolve => browser.once('exit', resolve)) : Promise.resolve();
   if (cdp) { await cdp.send('Browser.close'); await cdp.close(); }

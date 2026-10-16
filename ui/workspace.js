@@ -79,11 +79,13 @@ export function createWorkspace({ container, toolbar, definitions, storage, stor
     world.restore({ ...defaults, panes: [...defaults.panes, ...dynamic] });
     world.send('panes', 'focus');
   };
+  let saved = null;
   try {
     const stored = storage?.getItem(storageKey);
     if (stored) {
       const layout = JSON.parse(stored);
       world.restore(layout);
+      saved = layout;
       for (const pane of defaults.panes) {
         if (pane.visible && !layout.panes.some(entry => entry.id === pane.id)) world.send(pane.id, 'open');
       }
@@ -103,7 +105,11 @@ export function createWorkspace({ container, toolbar, definitions, storage, stor
     add(definition) {
       const pane = world.register(definition);
       pane.initialBounds = world.rectangle(pane);
-      if (definition.open) world.send(pane.id, 'open');
+      const entry = saved?.panes.find(item => item.id === pane.id);
+      if (entry) {
+        try { world.restore({ version: 1, panes: [entry] }); }
+        catch (error) { report(error); }
+      } else if (definition.open) world.send(pane.id, 'open');
       changed();
       return pane;
     },

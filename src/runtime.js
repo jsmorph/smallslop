@@ -60,16 +60,19 @@ export class Runtime {
     this.objectClass = this.defineClass('Object', { superclass: null, category: 'Kernel-Objects' });
     this.objectClass.metaclass.superclass = this.defineClass('Class', { category: 'Kernel-Classes' });
     this.defineClass('Metaclass', { superclass: this.classes.get('Class'), category: 'Kernel-Classes' });
-    for (const name of ['UndefinedObject', 'Boolean', 'Integer', 'Float', 'String', 'Array', 'Block', 'HostObject']) {
-      const category = ['Integer', 'Float'].includes(name) ? 'Kernel-Numbers'
-        : name === 'HostObject' ? 'Kernel-Host' : 'Kernel-Objects';
-      this.defineClass(name, { category });
-    }
-    this.defineClass('True', { superclass: this.classes.get('Boolean'), category: 'Kernel-Objects' });
-    this.defineClass('False', { superclass: this.classes.get('Boolean'), category: 'Kernel-Objects' });
-    this.defineClass('Symbol', { superclass: this.classes.get('String'), category: 'Kernel-Objects' });
-    this.defineClass('Character', { category: 'Kernel-Objects' });
-    this.nativeClasses = new Set([...this.classes.values()].filter(klass => klass !== this.objectClass));
+    for (const [name, superclass, category] of [
+      ['Magnitude', 'Object', 'Kernel-Magnitudes'], ['Number', 'Magnitude', 'Kernel-Numbers'],
+      ['Collection', 'Object', 'Collections-Abstract'], ['SequenceableCollection', 'Collection', 'Collections-Abstract'],
+      ['ArrayedCollection', 'SequenceableCollection', 'Collections-Abstract'],
+      ['UndefinedObject', 'Object', 'Kernel-Objects'], ['Boolean', 'Object', 'Kernel-Objects'],
+      ['True', 'Boolean', 'Kernel-Objects'], ['False', 'Boolean', 'Kernel-Objects'],
+      ['Integer', 'Number', 'Kernel-Numbers'], ['Float', 'Number', 'Kernel-Numbers'],
+      ['Character', 'Magnitude', 'Kernel-Magnitudes'], ['String', 'ArrayedCollection', 'Collections-Text'],
+      ['Symbol', 'String', 'Collections-Text'], ['Array', 'ArrayedCollection', 'Collections-Sequenceable'],
+      ['Block', 'Object', 'Kernel-Objects'], ['HostObject', 'Object', 'Kernel-Host'],
+    ]) this.defineClass(name, { superclass: this.classes.get(superclass), category });
+    this.nativeClasses = new Set(['Class', 'Metaclass', 'UndefinedObject', 'Boolean', 'True', 'False', 'Integer', 'Float',
+      'Character', 'String', 'Symbol', 'Array', 'Block', 'HostObject'].map(name => this.classes.get(name)));
     this.primitive(this.objectClass, 'yourself', 0, receiver => receiver);
     this.primitive(this.objectClass, 'class', 0, receiver => this.classOf(receiver));
     this.primitive(this.objectClass, '==', 1, (receiver, [other]) => receiver === other);

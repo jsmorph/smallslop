@@ -127,7 +127,7 @@ test('method browsing finds sends in blocks and distinguishes implementation for
   runtime.installSource(klass, 'answer ^[super yourself] value', { protocol: 'testing' });
   runtime.installSource(klass, "text ^'yourself'");
   const senders = send({ op: 'methods', sends: 'yourself' });
-  assert.deepEqual(senders.map(method => `${method.className} ${method.selector}`), ['BrowserExample answer']);
+  assert.deepEqual(senders.filter(method => method.className === klass.name).map(method => `${method.className} ${method.selector}`), ['BrowserExample answer']);
   assert.equal(send({ op: 'methods', selector: 'yourself' })[0].format, 'primitive');
   assert.equal(send({ op: 'methods', className: 'Block', selector: 'whileTrue:' })[0].format, 'bytecode');
   assert.deepEqual(send({ op: 'methods', className: klass.name }).map(method => method.selector), ['answer', 'text']);

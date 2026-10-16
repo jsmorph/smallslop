@@ -19,7 +19,7 @@ test('integer arithmetic remains exact and float conversion is explicit', () => 
   assert.equal(evaluate(runtime, '2 asFloat + 0.5'), 2.5);
   assert.equal(evaluate(runtime, '7.5 / 2.5'), 3);
   assert.equal(evaluate(runtime, '-2.75 truncated'), -2n);
-  assert.throws(() => evaluate(runtime, '1 + 1.0'), /requires two Integer/);
+  assert.throws(() => evaluate(runtime, '1 + 1.0'), /requires an Integer or Fraction. Convert Floats with asFloat/);
   assert.throws(() => evaluate(runtime, '3 quo: 0'), /zero/i);
 });
 

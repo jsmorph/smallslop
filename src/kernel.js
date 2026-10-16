@@ -1,5 +1,7 @@
 import { Code, assemble } from './bytecode.js';
 import { SendCall, SmallCharacter, SmallClass, SmallObject, SmallSymbol } from './objects.js';
+import { installPrimitives } from './primitives.js';
+import { libraryClasses, librarySource } from './library.js';
 
 function selectorName(value) {
   if (value instanceof SmallSymbol && value.name) return value.name;
@@ -135,17 +137,16 @@ export function installKernel(runtime) {
       if (typeof receiver !== type || typeof argument !== type) throw new Error(`${name} ${selector} requires two ${name} values.`);
       return operation(receiver, argument);
     }, { protocol: ['<', '<=', '>', '>='].includes(selector) ? 'comparing' : 'arithmetic' });
-    for (const [selector, operation] of Object.entries(primitives)) binary(selector, operation);
     runtime.primitive(klass, 'negated', 0, receiver => -receiver, { protocol: 'arithmetic' });
     runtime.primitive(klass, 'asFloat', 0, receiver => Number(receiver), { protocol: 'converting' });
-    runtime.primitive(klass, 'asString', 0, receiver => String(receiver), { protocol: 'converting' });
     if (name === 'Float') {
+      for (const [selector, operation] of Object.entries(primitives)) binary(selector, operation);
       binary('/', (a, b) => a / b);
-      runtime.primitive(klass, 'truncated', 0, receiver => BigInt(Math.trunc(receiver)), { protocol: 'converting' });
-    } else {
-      binary('quo:', (a, b) => a / b);
-      binary('rem:', (a, b) => a % b);
-    }
+      runtime.primitive(klass, 'truncated', 0, receiver => {
+        if (!Number.isFinite(receiver)) throw new Error('truncated requires a finite Float.');
+        return BigInt(Math.trunc(receiver));
+      }, { protocol: 'converting' });
+    } else runtime.primitive(klass, 'asString', 0, receiver => String(receiver), { protocol: 'converting' });
   }
   const methods = {
     Object: ['= other ^self == other', '~= other ^(self = other) not', '~~ other ^(self == other) not',
@@ -170,6 +171,16 @@ export function installKernel(runtime) {
   }
   installObjectProtocol(runtime);
   installTextProtocol(runtime);
+  for (const [name, superclass, slots, category] of libraryClasses) {
+    runtime.defineClass(name, { superclass: runtime.classes.get(superclass), slots, category });
+  }
+  installPrimitives(runtime);
+  for (const [className, protocols] of Object.entries(librarySource)) {
+    const klass = runtime.classNamed(className);
+    for (const [protocol, sources] of Object.entries(protocols)) {
+      for (const source of sources) runtime.installSource(klass, source, { protocol });
+    }
+  }
   runtime.install(runtime.classes.get('Block'), 'whileTrue:', new Code({
     args: ['body'], literals: ['value', null], source: 'whileTrue: body',
     bytes: assemble([

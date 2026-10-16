@@ -1,8 +1,9 @@
-export class AgentConnection {
-  constructor({ command, session, error, url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/session` }) {
+export class SessionConnection {
+  constructor({ command, session, error, open = () => {}, url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/session` }) {
     this.command = command;
     this.session = session;
     this.error = error;
+    this.open = open;
     this.url = url;
     this.pending = new Map();
     this.nextId = 1;
@@ -15,6 +16,7 @@ export class AgentConnection {
     if (this.socket && this.socket.readyState < WebSocket.CLOSING) return;
     const socket = new WebSocket(this.url);
     this.socket = socket;
+    socket.addEventListener('open', () => this.open());
     socket.addEventListener('message', async event => {
       try {
         const message = JSON.parse(event.data);
@@ -59,4 +61,5 @@ export class AgentConnection {
   interrupt() { this.send({ type: 'interrupt' }); }
   reset() { return this.request('reset'); }
   server(command) { return this.request('server', { command }); }
+  components(request) { return this.request('components', { request }); }
 }

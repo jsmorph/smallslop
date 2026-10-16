@@ -4,13 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { extname, resolve, sep } from 'node:path';
 import { acceptWebSocket } from './ws.mjs';
 import { ServerWorld } from './world.mjs';
+import { ComponentService } from './component-service.mjs';
 
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
 };
 
-export function createSmallslopServer({ root, directories, index, databasePath = ':memory:', createAgent }) {
+export function createSmallslopServer({ root, directories, index, databasePath = ':memory:', createAgent, components: componentOptions }) {
+  const components = componentOptions ? new ComponentService(componentOptions) : null;
   const allowed = directories.map(directory => resolve(root, directory) + sep);
   const clients = new Set();
   const validHost = request => {
@@ -23,6 +25,15 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       if (request.method !== 'GET') { response.writeHead(405); response.end('GET required'); return; }
       const { pathname } = new URL(request.url, 'http://localhost');
       if (pathname === '/') { response.writeHead(302, { Location: index }); response.end(); return; }
+      const component = /^\/components\/([a-z][a-z0-9-]*)\/versions\/([a-f0-9]{64})\/(.+)$/.exec(pathname);
+      if (component && components?.namespace === component[1]) {
+        const type = types[extname(component[3])];
+        if (!type) { response.writeHead(404); response.end('Not found'); return; }
+        const file = await components.store.file(component[2], decodeURIComponent(component[3]));
+        response.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+        response.end(file.text);
+        return;
+      }
       const path = resolve(root, `.${decodeURIComponent(pathname)}`);
       const type = types[extname(path)];
       if (!type || !allowed.some(prefix => path.startsWith(prefix))) { response.writeHead(404); response.end('Not found'); return; }
@@ -63,7 +74,7 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       if (signal?.aborted) throw signal.reason;
       return world.dispatch(command, { signal });
     };
-    const requestPage = (command, signal) => {
+    const requestPage = (command, signal, timeout = 30000) => {
       if (closed) return Promise.reject(new Error('The page disconnected.'));
       if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Agent operation cancelled.'));
       const id = `c${nextCommand++}`;
@@ -75,12 +86,13 @@ export function createSmallslopServer({ root, directories, index, databasePath =
           if (error) reject(error); else resolve(result);
         };
         const abort = () => finish(signal.reason ?? new Error('Agent operation cancelled.'));
-        const timer = setTimeout(() => finish(new Error('The page command timed out.')), 30000);
+        const timer = timeout ? setTimeout(() => finish(new Error('The page command timed out.')), timeout) : null;
         pending.set(id, finish);
         signal?.addEventListener('abort', abort, { once: true });
         send({ type: 'command', id, command });
       });
     };
+    const page = { send: command => requestPage(command, undefined, 0), connected: () => !closed };
     const getRunner = async () => {
       if (!runner) {
         starting ??= createAgent({ page: requestPage, server: requestServer, onEvent: event => { if (!closed) append(event); } });
@@ -94,6 +106,12 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     const handle = async message => {
       if (message.type === 'server') {
         const result = await requestServer(message.command);
+        send({ type: 'reply', id: message.id, result });
+        return;
+      }
+      if (message.type === 'components') {
+        if (!components) throw new Error('This server has no component service.');
+        const result = await components.dispatch(message.request, { page });
         send({ type: 'reply', id: message.id, result });
         return;
       }
@@ -149,8 +167,10 @@ export function createSmallslopServer({ root, directories, index, databasePath =
         for (const finish of [...pending.values()]) finish(new Error('The page disconnected.'));
         try { await runner?.interrupt(); } finally {
           runner?.dispose();
-          await world.close();
-          clients.delete(client);
+          try { await components?.disconnect(page); } finally {
+            await world.close();
+            clients.delete(client);
+          }
         }
       })();
       return disposing;
@@ -170,10 +190,11 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     publish();
   });
   return {
-    server,
+    server, components,
     async close() {
       await Promise.all([...clients].map(async client => { await client.dispose(); client.connection.close(); }));
       if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      await components?.close();
     },
   };
 }

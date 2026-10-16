@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { CdpConnection } from './cdp-connection.mjs';
+import { CdpConnection } from '../server/debug-connection.mjs';
 import { createSmallslopServer } from '../server/server.mjs';
 import { smallslopTools } from '../server/agent.mjs';
 import { options } from '../examples/workspace.mjs';
@@ -43,6 +43,9 @@ async function testAgent({ page, server, onEvent }) {
         assert.deepEqual(rows.value, [['first']]);
         await call('smallslop_server', { command: JSON.stringify({ op: 'close', id: inserted.result.id }) });
         await call('smallslop_command', { command: '{"op":"inspect","runtime":"server"}' });
+      } else if (message === 'components') {
+        const instances = await call('smallslop_command', { command: JSON.stringify({ op: 'components', request: { op: 'objects.list', runtime: 'page' } }) });
+        assert.ok(instances.some(instance => instance.className === 'DiskPane' && instance.status === 'ready'));
       } else if (message === 'hold') {
         hold = Promise.withResolvers();
         await hold.promise;
@@ -92,7 +95,7 @@ async function prompt(sessionId, text) {
 const idle = `document.querySelector('#connection-status').textContent === 'Agent: Ready'`;
 
 try {
-  app = createSmallslopServer({ ...options, createAgent: testAgent });
+  app = createSmallslopServer({ ...options, createAgent: testAgent, components: { directory: join(directory, 'components'), namespace: 'test' } });
   await new Promise((resolve, reject) => {
     app.server.once('error', reject);
     app.server.listen(0, '127.0.0.1', () => { app.server.off('error', reject); resolve(); });
@@ -141,6 +144,18 @@ try {
   })()`);
   await until(sessionId, `[...smallslop.workspace.world.panes.get('debugger').view.body.querySelectorAll('option')].some(option => option.textContent === 'Database execute:parameters:')`);
 
+  await until(sessionId, `smallslop.components?.identity.namespace === 'test'`);
+  await evaluate(sessionId, `document.querySelector('#disk-example').click()`);
+  await until(sessionId, `[...smallslop.workspace.world.panes.values()].some(pane => pane.object.slots.title === 'Disk usage' && pane.object.slots.visible)`);
+  await evaluate(sessionId, `[...smallslop.workspace.world.panes.values()].find(pane => pane.object.slots.title === 'Disk usage').view.body.querySelector('button').click()`);
+  const usage = await until(sessionId, `(() => {
+    const text = [...smallslop.workspace.world.panes.values()].find(pane => pane.object.slots.title === 'Disk usage').view.body.querySelector('pre').textContent;
+    return text.includes('Used bytes') && text;
+  })()`);
+  assert.match(usage, /^\/\nUsed bytes: \d+\nFree bytes: \d+/);
+  await prompt(sessionId, 'components');
+  await until(sessionId, `${idle} && [...document.querySelectorAll('.agent-message.assistant')].some(node => node.textContent.includes('Finished components.'))`);
+
   await prompt(sessionId, 'hold');
   await until(sessionId, `document.querySelector('#connection-status').textContent === 'Agent: Running'`);
   await evaluate(sessionId, `[...smallslop.workspace.world.panes.get('agent').view.body.querySelectorAll('button')].find(button => button.textContent === 'Stop').click()`);
@@ -150,7 +165,7 @@ try {
   await until(sessionId, `${idle} && document.querySelectorAll('.agent-message').length === 0`);
   assert.deepEqual(await evaluate(sessionId, `smallslop.workspace.state().activity`), []);
   assert.ok(calls.some(call => call.name === 'smallslop_server'));
-  console.log('Chromium passed the workspace agent, page command, server database, interrupt, and reset tests.');
+  console.log('Chromium passed the workspace agent, page command, server database, component, interrupt, and reset tests.');
 } finally {
   const exit = browser?.exitCode === null ? new Promise(resolve => browser.once('exit', resolve)) : Promise.resolve();
   if (cdp) { await cdp.send('Browser.close'); await cdp.close(); }

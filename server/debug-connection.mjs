@@ -54,3 +54,37 @@ export class CdpConnection {
     this.listeners.clear();
   }
 }
+
+export class JavaScriptDebugger {
+  constructor(connection, { sessionId, sourceFilter = () => true } = {}) {
+    this.connection = connection;
+    this.sessionId = sessionId;
+    this.scripts = new Map();
+    this.paused = null;
+    this.error = null;
+    this.sourceFilter = sourceFilter;
+    this.unsubscribe = connection.subscribe(message => {
+      if (message.method === 'Connection.error') { this.error = message.params.message; return; }
+      if (message.sessionId !== this.sessionId) return;
+      if (message.method === 'Debugger.scriptParsed' && sourceFilter(message.params.url)) this.scripts.set(message.params.scriptId, message.params);
+      if (message.method === 'Debugger.paused') this.paused = message.params;
+      if (message.method === 'Debugger.resumed') this.paused = null;
+    });
+  }
+
+  async enable() {
+    await this.connection.send('Runtime.enable', {}, this.sessionId);
+    await this.connection.send('Debugger.enable', {}, this.sessionId);
+    return this.state();
+  }
+
+  state() { return { available: !this.error, error: this.error, paused: this.paused, scripts: [...this.scripts.values()] }; }
+
+  async dispatch(request) {
+    if (request.action === 'state') return this.state();
+    if (typeof request.method !== 'string' || !/^(Debugger|Runtime)\./.test(request.method)) throw new Error('A JavaScript debugger request requires a Debugger or Runtime method.');
+    return this.connection.send(request.method, request.params ?? {}, this.sessionId);
+  }
+
+  close() { this.unsubscribe(); return this.connection.close(); }
+}

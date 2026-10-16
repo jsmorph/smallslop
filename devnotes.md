@@ -82,3 +82,21 @@ Pi credentials, and of the database.
 - [x] Upgrade Pi to 1.3.0 and rerun the audit and tests.
 - [x] Rename `catalog` to `namespace` and remove `cancelPath`.
 - [x] Add `--host` and restrict the host check to loopback servers.
+
+## 2026-10-16: Documentation review
+
+`README.md` repeats most of the manual's API sections in shorter form, so
+the two copies can disagree.  The manual's "Running Smallslop" chapter mixes
+commands with the workspace, inspector, and server runtime descriptions.
+The manual omits the APIs that a project needs after copying `ui/` or
+`server/`, and it does not document `components/`.  Both files contain
+history phrasing, scattered "remain pending" notes, broken line wraps, and
+an inaccurate sentence about which modules carry debugger operations.
+
+- [ ] Reduce `README.md` to a description, the directory table, setup and commands, the workspace example with its security note, and a link to the manual.  Move any fact found only in the README into the manual.
+- [ ] Reorganize the manual: overview; running the examples and tests; language; classes; processes and debugger; JSON debugger API; embedding and bytecode; browser tools; server and agent; components; limitations.
+- [ ] Document `createWorkspace`, pane definitions, workspace commands, `createWorkspaceDevelopment`, `createSmallslopServer`, the agent interface, `createPiAgent`, the three tool names, `AgentConnection`, and the example's page commands.
+- [ ] Document `components/` and `ComponentStore` from the code and `test/components.test.js`, including that no page in this repository hosts the example components.
+- [ ] Collect pending work in the limitations table, and remove history phrasing, test counts, and vague sentences.
+- [ ] Check every documented option and command against the code, and run every Node example.
+- [ ] Remove test counts and settled items from these notes.

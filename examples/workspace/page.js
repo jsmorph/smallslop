@@ -1,7 +1,9 @@
 import { createWorkspace } from '../../ui/workspace.js';
 import { createWorkspaceDevelopment } from '../../ui/development.js';
 import { element } from '../../ui/pane-view.js';
-import { AgentConnection } from '../../ui/agent-connection.js';
+import { createWorkspaceComponents } from '../../ui/components.js';
+import { SessionConnection } from '../../ui/session-connection.js';
+import { encode } from '../../components/values.js';
 
 const commands = [
   { op: 'state', description: 'Read the panes, their contents, and these commands.' },
@@ -16,13 +18,23 @@ const commands = [
   { op: 'objectInspector', id: 'Inspector pane ID', action: 'state | select | page | expression | evaluate | run | resume | pause | step | stepOver | stepOut | retry | cancel | openSelected | openResult | openClass | browse | debugger | debug',
     value: 'Field key, collection offset, expression text, or run/debug evaluation mode', description: 'Operate an object inspector. debug takes a debugger request.' },
   { op: 'debug', request: 'Debugger request', description: 'Use the page debugger.' },
+  { op: 'components', request: 'Component request', description: 'Send a request to the component service and wait for its result.' },
+  { op: 'diskExample', description: 'Install the disk-usage example components and open their pane.' },
 ];
+
+const diskManifests = {
+  reader: { name: 'disk-reader', target: 'server',
+    interface: { className: 'DiskReader', messages: { usage: { method: 'usage', arity: 0 } } } },
+  pane: { name: 'disk-pane', target: 'browser', bindings: { disk: ['usage'] },
+    interface: { className: 'DiskPane', messages: { refresh: { method: 'refresh', arity: 0 }, state: { method: 'state', arity: 0 } } } },
+};
 
 const views = new Set();
 let session = { status: 'Connecting', model: '', messages: [] };
 let development;
+let components;
 
-const connection = new AgentConnection({ command, session: receive, error: error => {
+const connection = new SessionConnection({ command, session: receive, open: () => connectComponents().catch(report), error: error => {
   workspace.report(error);
   if (!connection.connected) receive({ ...session, status: 'Disconnected' });
 } });
@@ -42,7 +54,39 @@ function context() { return { focused: world.focused }; }
 function command(request) {
   if (request.op === 'state') return { ...workspace.state(), commands };
   if (request.op === 'inspect') return inspect(request);
+  if (request.op === 'components') return requireComponents().run(request.request);
+  if (request.op === 'componentRuntime') return requireComponents().command(request);
+  if (request.op === 'diskExample') return openDiskExample();
   return development.execute(request);
+}
+
+function requireComponents() {
+  if (!components) throw new Error('The component service is not connected.');
+  return components;
+}
+
+async function connectComponents() {
+  if (!components) {
+    const { namespace } = await connection.components({ op: 'runtimes.describe' });
+    components ??= createWorkspaceComponents({ workspace, development, namespace, request: value => connection.components(value) });
+    globalThis.smallslop.components = components;
+  }
+  await components.connect();
+}
+
+async function openDiskExample() {
+  const { run, identity } = requireComponents();
+  const source = async name => {
+    const response = await fetch(new URL(`../components/${name}.mjs`, import.meta.url));
+    if (!response.ok) throw new Error(`Cannot read the ${name} example: HTTP ${response.status}.`);
+    return response.text();
+  };
+  const reader = await run({ op: 'modules.install', manifest: diskManifests.reader, files: { 'index.mjs': await source('disk-reader') } });
+  const disk = await run({ op: 'objects.create', runtime: 'server', version: reader.version, configuration: encode({ path: '/' }) });
+  const view = await run({ op: 'modules.install', manifest: diskManifests.pane, files: { 'index.mjs': await source('disk-pane') } });
+  const display = await run({ op: 'objects.create', runtime: identity.runtime, version: view.version,
+    configuration: encode({}), bindings: { disk: disk.reference } });
+  return run({ op: 'panes.open', target: display.reference, title: 'Disk usage' });
 }
 
 function inspect({ id, value, runtime = 'page' }) {
@@ -131,5 +175,6 @@ function agentPane() {
 document.querySelector('#inspect-database').addEventListener('click', () => {
   Promise.resolve().then(() => inspect({ runtime: 'server' })).catch(report);
 });
-globalThis.smallslop = { workspace, development, connection, command };
+document.querySelector('#disk-example').addEventListener('click', () => openDiskExample().catch(report));
+globalThis.smallslop = { workspace, development, connection, command, components };
 connection.connect();

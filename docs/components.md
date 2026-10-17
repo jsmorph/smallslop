@@ -383,7 +383,10 @@ call and Release for each finished call.
 `components: {directory, namespace}`.  The directory holds the store, and the
 namespace is part of every identity and component URL.  The service starts the
 server child process at the first server operation, routes each request to its
-runtime, and records server instances and jobs.
+runtime, and records server instances and jobs.  The child loads the `kernel`
+and `tools` [source packages](manual.md#source-packages), sends its class
+changes to the server process to write, and loads the files that other
+runtimes write.
 
 | Store path | Contents |
 | --- | --- |

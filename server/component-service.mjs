@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { ComponentStore } from './component-store.mjs';
 import { ComponentProcess } from './component-process.mjs';
+import { SourceFiles } from './source-files.mjs';
 import { CdpConnection, JavaScriptDebugger } from './debug-connection.mjs';
 import { ComponentRequests } from '../components/requests.js';
 import { describeComponentJob } from '../components/jobs.js';
@@ -9,11 +10,14 @@ import { referenceKey, validateReference } from '../components/values.js';
 const queries = new Set(['runtimes.describe', 'modules.list', 'modules.source', 'snapshots.read', 'snapshots.list', 'jobs.list', 'jobs.inspect', 'debug.javascript']);
 
 export class ComponentService {
-  constructor({ directory, namespace, sourceRoot, maxActive = 256, maxCompleted = 1024 }) {
+  constructor({ directory, namespace, sources, report, maxActive = 256, maxCompleted = 1024 }) {
     if (typeof namespace !== 'string' || !/^[a-z][a-z0-9-]*$/.test(namespace)) throw new Error('A component namespace requires lowercase letters, digits, and hyphens.');
+    if (!(sources instanceof SourceFiles)) throw new Error('A component service requires its SourceFiles.');
+    if (typeof report !== 'function') throw new Error('A component service requires a report function for source file errors.');
     this.store = new ComponentStore(path.resolve(directory), namespace);
     this.namespace = namespace;
-    this.sourceRoot = sourceRoot;
+    this.sources = sources;
+    this.report = report;
     this.requests = new ComponentRequests({ maxActive, maxCompleted });
     this.browsers = new Map();
     this.instances = new Map();
@@ -23,7 +27,7 @@ export class ComponentService {
   }
 
   server() {
-    if (!this.process) this.process = new ComponentProcess({ directory: this.store.directory, namespace: this.namespace, sourceRoot: this.sourceRoot,
+    if (!this.process) this.process = new ComponentProcess({ directory: this.store.directory, namespace: this.namespace, sources: this.sources, report: this.report,
       remote: request => this.invoke(request), changed: event => {
         if (event.type === 'instance') this.remember(event);
         if (event.type === 'call') {

@@ -25,14 +25,17 @@ opens the [disk-usage components](components.md#the-disk-example).
 | `--port PORT` | `0`, which selects a free port | Listening port |
 | `--database FILE` | `:memory:` | SQLite database.  With the default, each page connection has its own empty database. |
 | `--components DIRECTORY` | `.local/components` in the repository | Component store |
-| `--sources DIRECTORY` | `smalltalk` in the repository | Root of the [source packages](manual.md#source-packages) that the page and server runtimes load and write |
+| `--sources DIRECTORY` | `smalltalk` in the repository | Root of the [source packages](manual.md#source-packages) that every runtime loads and writes |
 
-The page runtime and the server runtime each save every change to a class,
-from the System Browser, the Debugger, the agent, or File in, to that class's
-file under the sources directory.  With the default, they write the
-repository's own source files, and git shows the changes.  A class that the
-System Browser defines or files in goes to the `workspace` package.  Activity
-reports a failed write from either runtime.
+Every runtime saves each change to a class, from the System Browser, the
+Debugger, the agent, or File in, to that class's file under the sources
+directory, and every other runtime that loaded the class's package loads the
+new file.  The runtimes are the page runtime, the server runtime of each
+connected page, and the server component runtime.  With the default, they
+write the repository's own source files, and git shows the changes.  A class
+that the System Browser defines or files in goes to the `workspace` package.
+Activity reports a write that fails, a file that a runtime cannot load, and
+unsaved changes that a newer file replaced.
 
 The agent requires a Pi model credential: a login stored in Pi's `auth.json`,
 or a provider key in the environment, such as `OPENAI_API_KEY`.  The server
@@ -206,7 +209,7 @@ The page and server exchange JSON text messages over the WebSocket at
 `/api/session`.  [`SessionConnection`](../ui/session-connection.js) implements
 the page side.  A request's reply carries its `id` with either `result` or
 `error`, and an error is a record with `name`, `message`, and fields such as
-`phase`, `component`, and `outcomeUnknown`.
+`status`, `phase`, `component`, and `outcomeUnknown`.
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
@@ -215,13 +218,16 @@ the page side.  A request's reply carries its `id` with either `result` or
 | Page to server | `{type: 'reset', id}` | Discard the conversation.  Rejected during a turn. |
 | Page to server | `{type: 'server', id, command}` | Run a server runtime command |
 | Page to server | `{type: 'components', id, request}` | Send a request to the component service |
+| Page to server | `{type: 'sources.subscribe', id, packages}` | Receive source file versions for the packages in `packages`, a record of `[{name, version}]` lists that the page holds.  The server first sends each file whose version differs, then replies. |
+| Page to server | `{type: 'sources.write', id, packageName, file, text, version}` | Write a source file over `version`, or create it when `version` is `null`.  The reply is `{version}`, or an error with `status` 412 when the file changed. |
 | Page to server | `{type: 'commandResult', id, result}` or `error` | Answer a page command |
 | Server to page | `{type: 'session', state}` | The whole state, `id`, `status`, `model`, and `messages`, at connection and after reset |
 | Server to page | `{type: 'status', status, model}` | A status or model change |
 | Server to page | `{type: 'message', message}` | One new conversation entry |
 | Server to page | `{type: 'command', id, command}` | Run a page command |
 | Server to page | `{type: 'reply', id, result}` or `error` | Answer a page request |
-| Server to page | `{type: 'error', error}` | Report a malformed message |
+| Server to page | `{type: 'source', update}` | A source file version, `{packageName, name, text, version}`, for a subscribed package |
+| Server to page | `{type: 'error', error}` | Report a malformed message, or a source file that a server runtime cannot save or load |
 
 The page answers a command on the WebSocket that delivered it, so a result
 computed after a reconnect never reaches the new session.  The agent's page
@@ -251,13 +257,10 @@ session, stops the HTTP server, and closes the component service.
 | `components` | Optional `{directory, namespace}` for a [component service](components.md#hosting-components) |
 | `sourceRoot` | Directory of the [source packages](manual.md#source-packages).  The default is the repository's `smalltalk` directory. |
 
-The server answers `GET`, and `PUT` for source files.  `GET
+The server answers only `GET`, and other requests return 405.  `GET
 /api/smalltalk/PACKAGE` returns the package's files as JSON
-`{name, text, version}` records.  `PUT /api/smalltalk/PACKAGE/Class.st`
-replaces a file when `If-Match` holds its current version in quotes, or
-creates it with `If-None-Match: *`.  It answers 204 with the new version as
-`ETag`, 412 with the current version when the file changed, and 428 without a
-precondition.  Other requests return 405.  It serves files with the extensions `.html`,
+`{name, text, version}` records.  Pages write source files through the
+[session protocol](#session-protocol).  It serves files with the extensions `.html`,
 `.js`, `.mjs`, `.css`, `.json`, `.svg`, `.png`, and `.jpg` from the listed
 directories, and it serves installed component files at
 `/components/NAMESPACE/versions/VERSION/FILE`.  A malformed path returns 400,
@@ -278,8 +281,7 @@ accepts only loopback host names: `127.0.0.1`, `localhost`, `[::1]`, and its
 own address, each with its port.  This check blocks DNS rebinding from other
 sites.  The server rejects a WebSocket whose `Origin` is present and differs
 from `http://` or `https://` followed by the requested host.  Browsers always
-send `Origin`, and programs other than browsers can omit it.  The same
-`Origin` rule applies to `PUT` requests for source files.
+send `Origin`, and programs other than browsers can omit it.
 
 The server has no authentication, and on a non-loopback address it accepts any
 host name.  Anyone who can reach the port can then use the agent with your Pi
@@ -350,9 +352,11 @@ test sends a prompt to a model.
 
 The conversation lives in server memory and ends when the page disconnects or
 the server stops.  Each page connection has one agent and one turn at a time.
-Server component runtimes do not save their class changes.  When another
-runtime or program changes a class's file after a runtime read it, that
-runtime stops saving the class and Activity reports the conflict.  Both
-runtimes of a page read the files again when the page reloads.
+Running runtimes learn of a source file change only when a runtime of the same
+server writes it.  An edit made with a text editor or git reaches a runtime
+when the runtime next saves that class, because the version check then fails
+and the server sends the current file, or when the page reloads.  Two servers
+must not share a sources directory, because each orders writes only among its
+own runtimes.
 A page command that runs longer than 30 seconds, such as a slow inspector
 evaluation, fails its tool call.

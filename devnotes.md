@@ -276,3 +276,43 @@ which reads the current files.  The server reports a write failure to the
 page as a session `error` message, which the page shows in Activity.  Server
 component runtimes run in child processes and do not save their changes:
 `writeSourceFile` orders writes within one process only.
+
+## 2026-10-16: One set of files for every runtime
+
+Saving from each runtime left the other runtimes with stale copies of shared
+classes.  One server runs a page runtime and a server runtime for each
+connected page, plus one server component runtime, and the `kernel` and
+`tools` packages load into all of them.  A change to `Integer` in one runtime
+never reached code running in the others, and their next save of `Integer`
+conflicted.  The files are now the one source of every class: the server
+process writes every file, and after each write it sends the new text and
+version to every runtime that loaded the package.
+
+- [x] `SourceFiles` in `server/source-files.mjs`: one writer per sources
+  directory, writes to a file in order, and subscriptions with catch-up.
+- [x] `SourceStore.receive` and `loadClassFile`: load another runtime's file,
+  keep unchanged methods and their breakpoints, and remove methods the file
+  lacks (`Runtime>>removeMethod`).
+- [x] The page writes and subscribes over its session WebSocket.  The HTTP
+  `PUT` route is gone.
+- [x] The server component runtime writes through the server process and
+  receives files from it.
+
+Each runtime writes and receives on one ordered channel: the page on its
+WebSocket, `ServerWorld` by direct calls, and the component child on its IPC
+channel.  The server sends the update for a write before the reply to that
+write, and it sends the current file before a 412 reply.  A store can then
+tell its own write from another runtime's by the text it is writing, and a
+412 always follows an update that already loaded the current file.  With
+`PUT` for writes and the WebSocket for updates, a reply could arrive before
+an earlier update, and the store could not order them, because versions are
+digests.  When a disconnect hides the result of a write, the store keeps the
+text and recognizes it in the catch-up after reconnecting.
+
+A runtime that had unsaved changes to a class when a newer file arrives loads
+the file and reports the lost changes.  Merging two versions of a class needs
+a person, and the runtime keeps no history to merge from.  Edits made outside
+the server, with an editor or git, reach running runtimes only through a
+failed version check or a reload.  Watching the directory with `fs.watch`
+would close that gap, but Node documents its behavior as platform-dependent
+([fs.watch caveats](https://nodejs.org/api/fs.html#caveats)).

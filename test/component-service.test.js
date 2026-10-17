@@ -1,16 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { encode, decode } from '../components/values.js';
 import { ComponentService } from '../server/component-service.mjs';
+import { SourceFiles, sourceRoot, sourceVersion } from '../server/source-files.mjs';
+
+const report = error => { throw error; };
 
 test('the component service runs server components in a child process', { timeout: 20000 }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-service-'));
-  const service = new ComponentService({ directory, namespace: 'test' });
+  const service = new ComponentService({ directory, namespace: 'test', sources: new SourceFiles(), report });
   try {
     const source = await readFile(new URL('../examples/components/disk-reader.mjs', import.meta.url), 'utf8');
     const reader = await service.invoke({ op: 'modules.install', files: { 'index.mjs': source },
@@ -62,7 +65,7 @@ test('the component service runs server components in a child process', { timeou
 
 test('a browser debugger attachment admits one request at a time', { timeout: 10000 }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-service-'));
-  const service = new ComponentService({ directory, namespace: 'test' });
+  const service = new ComponentService({ directory, namespace: 'test', sources: new SourceFiles(), report });
   const respond = Promise.withResolvers();
   const endpoint = createServer(async (_request, response) => {
     await respond.promise;
@@ -84,5 +87,35 @@ test('a browser debugger attachment admits one request at a time', { timeout: 10
     endpoint.close();
     await service.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the server component runtime saves its class changes and loads changes from other runtimes', { timeout: 20000 }, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-component-service-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'smallslop-root-'));
+  await cp(sourceRoot, root, { recursive: true });
+  const files = new SourceFiles(root);
+  const reports = [];
+  const service = new ComponentService({ directory, namespace: 'test', sources: files, report: error => reports.push(error.message) });
+  const until = async predicate => {
+    for (let attempt = 0; attempt < 400 && !await predicate(); attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(await predicate());
+  };
+  const integerFile = () => readFile(path.join(root, 'kernel', 'Integer.st'), 'utf8');
+  const debug = request => service.invoke({ op: 'debug.smallslop', runtime: 'server', request });
+  try {
+    await debug({ op: 'install', className: 'Integer', source: 'doubledForTest ^self * 2' });
+    await until(async () => /\nInteger method!\ndoubledForTest \^self \* 2!\n/.test(await integerFile()));
+    const text = await integerFile();
+    await files.write('kernel', 'Integer.st', `${text}\nInteger method!\ntripledForTest ^self * 3!\n`, sourceVersion(text));
+    await until(async () => (await debug({ op: 'methods', className: 'Integer', selector: 'tripledForTest' })).length === 1);
+    const current = await integerFile();
+    await files.write('kernel', 'Integer.st', `${current}\nInteger method!\nbroken ^(!\n`, sourceVersion(current));
+    await until(() => reports.length === 1);
+    assert.match(reports[0], /^The server component runtime cannot load kernel\/Integer.st, so it does not save Integer: /);
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });

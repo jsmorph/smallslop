@@ -96,6 +96,7 @@ export function referenceKey(value) {
 export function errorData(error) {
   return { name: error?.name ?? 'ThrownValue', message: error?.message ?? String(error), stack: error?.stack ?? null,
     ...(error?.outcomeUnknown ? { outcomeUnknown: true } : {}),
+    ...(Number.isInteger(error?.status) ? { status: error.status } : {}),
     ...(error?.requestId ? { requestId: error.requestId } : {}),
     ...(error?.phase ? { phase: error.phase } : {}),
     ...(error?.phase === 'release' ? { callId: error.callId, result: error.result } : {}),

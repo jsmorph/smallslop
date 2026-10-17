@@ -36,9 +36,13 @@ let development;
 let components;
 let diskPane = null;
 
-const connection = new SessionConnection({ command, session: receive, open: () => connectComponents().catch(report), error: error => {
+const connection = new SessionConnection({ command, session: receive, source: update => workspace.sources.receive(update), open: () => {
+  connectSources().catch(report);
+  connectComponents().catch(report);
+}, error: error => {
   workspace.report(error);
   if (!connection.connected) {
+    workspace.sources.detach();
     development.serverDisconnected();
     receive({ ...session, status: 'Disconnected' });
   }
@@ -70,6 +74,12 @@ function command(request) {
 function requireComponents() {
   if (!components) throw new Error('The component service is not connected.');
   return components;
+}
+
+async function connectSources() {
+  workspace.sources.detach();
+  await connection.request('sources.subscribe', { packages: workspace.sources.versions() });
+  workspace.sources.attach(async (packageName, file, text, version) => (await connection.request('sources.write', { packageName, file, text, version })).version);
 }
 
 async function connectComponents() {

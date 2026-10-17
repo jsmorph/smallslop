@@ -4,12 +4,10 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Runtime, fileOut } from '../src/index.js';
-import { SourceStore, loadSources } from '../src/sources.js';
-import { readPackage, readPackageSync, sourceRoot, sourceVersion, writeSourceFile } from '../server/source-files.mjs';
+import { SourceStore, loadClassFile, loadSources } from '../src/sources.js';
+import { SourceFiles, readPackage, readPackageSync, sourceRoot, sourceVersion } from '../server/source-files.mjs';
 import { createSmallslopServer } from '../server/server.mjs';
-import { sourceWriter } from '../ui/sources.js';
 import { ServerWorld } from '../server/world.mjs';
-import { readFileSync } from 'node:fs';
 
 const kernel = readPackageSync('kernel');
 const header = "Smalltalk interchangeVersion: '1.0'!\n";
@@ -64,137 +62,248 @@ test('every package in the repository loads without failures and files out uncha
   }
 });
 
-test('source packages read with versions, and writes check the version they replace', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
-  try {
-    await mkdir(join(root, 'user'));
-    await writeFile(join(root, 'user', 'Being.st'), 'one');
-    await writeFile(join(root, 'user', 'notes.txt'), 'ignored');
-    const files = readPackageSync('user', root);
-    assert.deepEqual(files, [{ name: 'Being.st', text: 'one', version: sourceVersion('one') }]);
-    assert.deepEqual(await readPackage('user', root), files);
-    assert.match(files[0].version, /^[A-Za-z0-9_-]{43}$/);
+test('loadClassFile replaces a class from its file and keeps unchanged methods', () => {
+  const runtime = new Runtime({ sources: kernel });
+  const load = text => loadClassFile(runtime, file('Being.st', text));
+  const method = (selector, source, protocol = 'accessing', kind = 'method') => `\nBeing ${kind}!\n${source}!\nAnnotation key: 'category' value: '${protocol}'!\n`;
+  assert.deepEqual(load(definition('Being') + method('kind', 'kind ^#being') + method('name', 'name ^#a')), []);
+  const being = runtime.classes.get('Being');
+  const kind = being.methods.get('kind');
+  runtime.primitive(being, 'native', 0, () => 1n);
+  assert.deepEqual(load(definition('Being') + method('kind', 'kind ^#being') + method('size', 'size ^3', 'testing') + method('make', 'make ^self new', 'instance creation', 'classMethod')), []);
+  assert.equal(being.methods.get('kind'), kind);
+  assert.deepEqual([...being.methods.keys()].sort(), ['kind', 'native', 'size']);
+  assert.equal(being.metaclass.methods.get('make').protocol, 'instance creation');
+  assert.deepEqual(load(definition('Being') + method('kind', 'kind ^#being', 'other') + method('size', 'size ^3', 'testing')), []);
+  assert.notEqual(being.methods.get('kind'), kind);
+  assert.equal(being.methods.get('kind').protocol, 'other');
+  assert.equal(being.metaclass.methods.has('make'), false);
+  const failures = load(definition('Being') + method('broken', 'broken ^(', 'accessing'));
+  assert.deepEqual(failures.map(failure => [failure.file, failure.className]), [['Being.st', 'Being']]);
+  assert.deepEqual([...being.methods.keys()].sort(), ['kind', 'native', 'size']);
+  runtime.removeMethod(being, 'size');
+  assert.equal(being.methods.has('size'), false);
+  assert.throws(() => runtime.removeMethod(being, 'size'), /Being has no method size/);
+});
 
-    assert.equal(await writeSourceFile(root, 'user', 'Being.st', 'two', files[0].version), sourceVersion('two'));
+async function sourceRootWith(files) {
+  const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
+  for (const [path, text] of Object.entries(files)) {
+    await mkdir(join(root, path, '..'), { recursive: true });
+    await writeFile(join(root, path), text);
+  }
+  return root;
+}
+
+test('SourceFiles reads packages with versions and writes only over the version it replaces', async () => {
+  const root = await sourceRootWith({ 'user/Being.st': 'one', 'user/notes.txt': 'ignored' });
+  const files = new SourceFiles(root);
+  try {
+    const read = files.readSync('user');
+    assert.deepEqual(read, [{ name: 'Being.st', text: 'one', version: sourceVersion('one') }]);
+    assert.deepEqual(await files.read('user'), read);
+    assert.deepEqual(await readPackage('user', root), read);
+    assert.match(read[0].version, /^[A-Za-z0-9_-]{43}$/);
+
+    assert.equal(await files.write('user', 'Being.st', 'two', read[0].version), sourceVersion('two'));
     assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'two');
-    await assert.rejects(writeSourceFile(root, 'user', 'Being.st', 'three', files[0].version),
+    await assert.rejects(files.write('user', 'Being.st', 'three', read[0].version),
       error => error.status === 412 && error.version === sourceVersion('two') && /user\/Being.st changed since it was read/.test(error.message));
-    assert.equal(await writeSourceFile(root, 'user', 'Animal.st', 'new', null), sourceVersion('new'));
-    await assert.rejects(writeSourceFile(root, 'user', 'Animal.st', 'again', null), error => error.status === 412);
-    await assert.rejects(writeSourceFile(root, 'user', '../Escape.st', 'x', null), error => error.status === 400);
-    await assert.rejects(writeSourceFile(root, '..', 'Escape.st', 'x', null), error => error.status === 400);
-    await assert.rejects(writeSourceFile(root, 'missing', 'Being.st', 'x', null), error => error.status === 404);
+    assert.equal(await files.write('user', 'Animal.st', 'new', null), sourceVersion('new'));
+    await assert.rejects(files.write('user', 'Animal.st', 'again', null), error => error.status === 412);
+    await assert.rejects(files.write('user', '../Escape.st', 'x', null), error => error.status === 400);
+    await assert.rejects(files.write('..', 'Escape.st', 'x', null), error => error.status === 400);
+    await assert.rejects(files.write('missing', 'Being.st', 'x', null), error => error.status === 404);
+    await assert.rejects(files.write('user', 'Being.st', 'x'), error => error.status === 400);
 
     const version = sourceVersion('two');
-    const results = await Promise.allSettled([writeSourceFile(root, 'user', 'Being.st', 'four', version), writeSourceFile(root, 'user', 'Being.st', 'five', version)]);
+    const results = await Promise.allSettled([files.write('user', 'Being.st', 'four', version), files.write('user', 'Being.st', 'five', version)]);
     assert.deepEqual(results.map(result => result.status), ['fulfilled', 'rejected']);
     assert.equal(results[1].reason.status, 412);
     assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'four');
-    assert.throws(() => readPackageSync('../user', root), error => error.status === 400);
+    assert.throws(() => files.readSync('../user'), error => error.status === 400);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('the Web server serves packages and writes a source file only over the version it replaces', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
+test('SourceFiles sends missed and new versions to the subscribers of a package', async () => {
+  const root = await sourceRootWith({ 'user/Being.st': 'one', 'other/Thing.st': 'thing' });
+  const files = new SourceFiles(root);
+  const received = { a: [], b: [], c: [] };
+  const listener = name => update => received[name].push(`${update.packageName}/${update.name}:${update.text}`);
+  try {
+    const a = await files.subscribe({ user: [{ name: 'Being.st', version: sourceVersion('one') }] }, listener('a'));
+    await files.subscribe({ user: [] }, listener('b'));
+    await files.subscribe({ other: [] }, listener('c'));
+    assert.deepEqual(received, { a: [], b: ['user/Being.st:one'], c: ['other/Thing.st:thing'] });
+    await files.write('user', 'Being.st', 'two', sourceVersion('one'));
+    await assert.rejects(files.write('user', 'Being.st', 'three', sourceVersion('one')), error => error.status === 412);
+    assert.deepEqual(received.a, ['user/Being.st:two', 'user/Being.st:two']);
+    assert.deepEqual(received.b, ['user/Being.st:one', 'user/Being.st:two', 'user/Being.st:two']);
+    assert.deepEqual(received.c, ['other/Thing.st:thing']);
+    a();
+    await files.write('user', 'Being.st', 'four', sourceVersion('two'));
+    assert.equal(received.a.length, 2);
+    await assert.rejects(files.subscribe({ '../user': [] }, listener('a')), error => error.status === 400);
+    await assert.rejects(files.subscribe({ user: [{ name: 'Being.st' }] }, listener('a')), error => error.status === 400);
+    await assert.rejects(files.subscribe(null, listener('a')), error => error.status === 400);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the Web server serves packages and answers only GET', async () => {
+  const root = await sourceRootWith({ 'user/Being.st': 'one' });
   const app = createSmallslopServer({ root: process.cwd(), directories: ['src'], index: '/src/index.js', sourceRoot: root });
   try {
-    await mkdir(join(root, 'user'));
-    await writeFile(join(root, 'user', 'Being.st'), 'one');
     await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${app.server.address().port}/api/smalltalk/`;
-    const [being] = await (await fetch(`${base}user`)).json();
-    assert.deepEqual(being, { name: 'Being.st', text: 'one', version: sourceVersion('one') });
+    assert.deepEqual(await (await fetch(`${base}user`)).json(), [{ name: 'Being.st', text: 'one', version: sourceVersion('one') }]);
     assert.equal((await fetch(`${base}missing`)).status, 404);
-    const put = (path, body, headers) => fetch(`${base}${path}`, { method: 'PUT', body, headers });
-    let response = await put('user/Being.st', 'two', { 'If-Match': `"${being.version}"` });
-    assert.deepEqual([response.status, response.headers.get('ETag')], [204, `"${sourceVersion('two')}"`]);
-    response = await put('user/Being.st', 'three', { 'If-Match': `"${being.version}"` });
-    assert.deepEqual([response.status, response.headers.get('ETag')], [412, `"${sourceVersion('two')}"`]);
-    assert.equal((await put('user/Being.st', 'three', {})).status, 428);
-    assert.equal((await put('user/Being.st', 'three', { 'If-Match': 'unquoted' })).status, 400);
-    assert.equal((await put('user/Being.st', 'three', { 'If-Match': `"${sourceVersion('two')}"`, Origin: 'http://elsewhere.example' })).status, 403);
-    assert.equal((await put('user/bad name.st', 'x', { 'If-None-Match': '*' })).status, 400);
-    assert.equal((await put('nowhere/Being.st', 'x', { 'If-None-Match': '*' })).status, 404);
-    assert.equal((await put('user/Animal.st', 'new', { 'If-None-Match': '*' })).status, 204);
-    assert.equal((await put('user/Animal.st', 'again', { 'If-None-Match': '*' })).status, 412);
-    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'two');
+    assert.equal((await fetch(`${base}user/Being.st`, { method: 'PUT', body: 'two' })).status, 405);
+    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'one');
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('the page source store writes changed classes and stops at a conflicting file', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
-  const app = createSmallslopServer({ root: process.cwd(), directories: ['src'], index: '/src/index.js', sourceRoot: root });
-  const reports = [];
-  let store;
-  try {
-    await mkdir(join(root, 'user'));
-    await writeFile(join(root, 'user', 'Being.st'), header + definition('Being'));
-    await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
-    const base = new URL(`http://127.0.0.1:${app.server.address().port}/api/smalltalk/`);
+async function sharedRuntimes(root, names = ['a', 'b']) {
+  const files = new SourceFiles(root);
+  const runtimes = {};
+  for (const name of names) {
     const runtime = new Runtime({ sources: kernel });
-    const packages = { user: readPackageSync('user', root) };
+    const packages = { user: files.readSync('user') };
     loadSources(runtime, packages.user);
-    store = new SourceStore({ runtime, packages, write: sourceWriter(base), report: error => reports.push(error.message), label: 'page runtime', defaultPackage: 'user' });
-    const being = runtime.classes.get('Being');
+    const reports = [];
+    const loaded = [];
+    const store = new SourceStore({ runtime, packages, report: error => reports.push(error.message), label: `${name} runtime`, defaultPackage: 'user', loaded: className => loaded.push(className) });
+    const write = (...args) => files.write(...args);
+    store.attach(write);
+    const unsubscribe = await files.subscribe(store.versions(), update => store.receive(update));
+    runtimes[name] = { runtime, store, reports, loaded, write, unsubscribe, klass: className => runtime.classes.get(className) };
+  }
+  return { files, runtimes, async settled() { for (const { store } of Object.values(runtimes)) await store.settled(); },
+    dispose() { for (const { store, unsubscribe } of Object.values(runtimes)) { unsubscribe(); store.dispose(); } } };
+}
 
-    runtime.installSource(being, 'kind ^#being', { protocol: 'accessing' });
-    await store.settled();
-    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), fileOut(being));
+test('a class change in one runtime reaches every runtime that loaded its package', async () => {
+  const root = await sourceRootWith({ 'user/Being.st': header + definition('Being') + "\nBeing method!\nkind ^#being!\nAnnotation key: 'category' value: 'accessing'!\n" });
+  const shared = await sharedRuntimes(root);
+  const { a, b } = shared.runtimes;
+  try {
+    const kind = b.klass('Being').methods.get('kind');
+    a.runtime.installSource(a.klass('Being'), 'name ^#a', { protocol: 'accessing' });
+    await shared.settled();
+    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), fileOut(a.klass('Being')));
+    assert.equal(fileOut(b.klass('Being')), fileOut(a.klass('Being')));
+    assert.equal(b.klass('Being').methods.get('kind'), kind);
+    assert.deepEqual(b.loaded, ['Being']);
 
-    const animal = runtime.defineClass('Animal', { superclass: being, category: 'Test' });
-    runtime.installSource(animal, 'sound ^#none');
-    await store.settled();
-    assert.throws(() => readFileSync(join(root, 'user', 'Animal.st')), /ENOENT/);
-    store.adopt(animal);
-    await store.settled();
+    b.runtime.removeMethod(b.klass('Being'), 'kind');
+    await shared.settled();
+    assert.equal(a.klass('Being').methods.has('kind'), false);
+
+    const animal = a.runtime.defineClass('Animal', { superclass: a.klass('Being'), category: 'Test' });
+    a.runtime.installSource(animal, 'sound ^#none');
+    a.store.adopt(animal);
+    await shared.settled();
     assert.equal(await readFile(join(root, 'user', 'Animal.st'), 'utf8'), fileOut(animal));
+    assert.equal(fileOut(b.klass('Animal')), fileOut(animal));
+    assert.equal(b.klass('Animal').superclass, b.klass('Being'));
 
-    runtime.primitive(being, 'native', 0, () => 1n);
-    runtime.installSource(being, 'kind ^#being');
-    await store.settled();
-    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), fileOut(being));
-
-    await writeFile(join(root, 'user', 'Being.st'), 'edited elsewhere');
-    runtime.installSource(being, 'kind ^#changed');
-    runtime.installSource(being, 'other ^1');
-    await store.settled();
-    runtime.installSource(being, 'third ^3');
-    await store.settled();
-    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), 'edited elsewhere');
-    assert.deepEqual(reports, ["user/Being.st changed after the page runtime read it.  The page runtime's changes to Being are not saved.  Reload the page to load the current file."]);
+    const loose = a.runtime.defineClass('Loose', { category: 'Test' });
+    a.runtime.installSource(loose, 'value ^1');
+    await shared.settled();
+    assert.equal(b.klass('Loose'), undefined);
+    assert.deepEqual([a.reports, b.reports], [[], []]);
   } finally {
-    store?.dispose();
-    await app.close();
+    shared.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('the server runtime writes its class changes to their source files', async () => {
+test('a runtime reports unsaved changes that a newer file replaces and files that do not load', async () => {
+  const root = await sourceRootWith({ 'user/Being.st': header + definition('Being') });
+  const shared = await sharedRuntimes(root);
+  const { a, b } = shared.runtimes;
+  try {
+    b.store.detach();
+    b.runtime.installSource(b.klass('Being'), 'sound ^1');
+    a.runtime.installSource(a.klass('Being'), 'color ^2');
+    await shared.settled();
+    assert.equal(b.klass('Being').methods.has('sound'), false);
+    assert.equal(b.klass('Being').methods.get('color').code.source, 'color ^2');
+    assert.deepEqual(b.reports, ["user/Being.st changed in another runtime before the b runtime saved its changes to Being.  The b runtime loaded the current file, and its unsaved changes to Being are lost."]);
+    b.store.attach(b.write);
+    await shared.settled();
+    assert.equal(await readFile(join(root, 'user', 'Being.st'), 'utf8'), fileOut(a.klass('Being')));
+
+    const current = await readFile(join(root, 'user', 'Being.st'), 'utf8');
+    await shared.files.write('user', 'Being.st', `${current}\nBeing method!\nbroken ^(!\n`, sourceVersion(current));
+    assert.match(a.reports[0], /^The a runtime cannot load user\/Being.st, so it does not save Being: Being: /);
+    a.runtime.installSource(a.klass('Being'), 'other ^3');
+    await shared.settled();
+    assert.match(await readFile(join(root, 'user', 'Being.st'), 'utf8'), /broken \^\(/);
+    assert.equal(a.reports.length, 1);
+  } finally {
+    shared.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a runtime that lost its connection during a write saves its later changes after reconnecting', async () => {
+  const root = await sourceRootWith({ 'user/Being.st': header + definition('Being') });
+  const shared = await sharedRuntimes(root, ['b']);
+  const { b } = shared.runtimes;
+  try {
+    b.unsubscribe();
+    b.store.attach(async (...args) => {
+      await shared.files.write(...args);
+      b.store.detach();
+      throw new Error('The session connection closed.');
+    });
+    b.runtime.installSource(b.klass('Being'), 'size ^3');
+    await shared.settled();
+    b.runtime.installSource(b.klass('Being'), 'more ^4');
+    b.unsubscribe = await shared.files.subscribe(b.store.versions(), update => b.store.receive(update));
+    b.store.attach(b.write);
+    await shared.settled();
+    const text = await readFile(join(root, 'user', 'Being.st'), 'utf8');
+    assert.equal(text, fileOut(b.klass('Being')));
+    assert.match(text, /size \^3/);
+    assert.match(text, /more \^4/);
+    assert.deepEqual(b.reports, []);
+  } finally {
+    shared.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the server runtime writes its class changes and loads changes from other runtimes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'smallslop-root-'));
   const reports = [];
   let world;
   try {
     await cp(sourceRoot, root, { recursive: true });
-    world = new ServerWorld(':memory:', { sourceRoot: root, report: error => reports.push(error.message) });
-    const install = source => world.dispatch({ op: 'debug', request: { op: 'install', className: 'Integer', source } });
-    await install('doubledForTest ^self * 2');
+    const files = new SourceFiles(root);
+    world = new ServerWorld(':memory:', { sources: files, report: error => reports.push(error.message) });
+    await world.subscription;
+    await world.dispatch({ op: 'debug', request: { op: 'install', className: 'Integer', source: 'doubledForTest ^self * 2' } });
     await world.sources.settled();
     const integer = world.runtime.classes.get('Integer');
-    assert.equal(await readFile(join(root, 'kernel', 'Integer.st'), 'utf8'), fileOut(integer));
-    assert.match(fileOut(integer), /\nInteger method!\ndoubledForTest \^self \* 2!\n/);
+    const text = await readFile(join(root, 'kernel', 'Integer.st'), 'utf8');
+    assert.equal(text, fileOut(integer));
+    assert.match(text, /\nInteger method!\ndoubledForTest \^self \* 2!\n/);
 
-    await writeFile(join(root, 'kernel', 'Integer.st'), 'edited elsewhere');
-    await install('tripledForTest ^self * 3');
+    await files.write('kernel', 'Integer.st', `${text}\nInteger method!\ntripledForTest ^self * 3!\n`, sourceVersion(text));
+    assert.equal(integer.methods.get('tripledForTest').code.source, 'tripledForTest ^self * 3');
     await world.close();
     world = null;
-    assert.equal(await readFile(join(root, 'kernel', 'Integer.st'), 'utf8'), 'edited elsewhere');
-    assert.deepEqual(reports, ["kernel/Integer.st changed after the server runtime read it.  The server runtime's changes to Integer are not saved.  Reload the page to load the current file."]);
-    assert.throws(() => new ServerWorld(':memory:', { sourceRoot: root }), /requires a report function/);
+    assert.deepEqual(reports, []);
+    assert.throws(() => new ServerWorld(':memory:', { sources: files }), /requires a report function/);
+    assert.throws(() => new ServerWorld(':memory:', { report: () => {} }), /requires its SourceFiles/);
   } finally {
     await world?.close();
     await rm(root, { recursive: true, force: true });

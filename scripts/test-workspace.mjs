@@ -166,6 +166,10 @@ try {
   const classFile = name => evaluate(sessionId, `smallslop.command({op: 'browse', action: 'reveal', className: '${name}'}) && smallslop.command({op: 'browse', action: 'fileOut'}).text`);
   await sourceFile('kernel/Integer.st', await classFile('Integer'));
   assert.match(await readFile(join(directory, 'smalltalk/kernel/Integer.st'), 'utf8'), /\nInteger method!\ndoubledForTest \^self \* 2!\n/);
+  const serverMethods = selector => `smallslop.connection.server({op: 'debug', request: {op: 'methods', className: 'Integer', selector: '${selector}'}}).then(methods => methods.length)`;
+  await until(sessionId, `${serverMethods('doubledForTest')}.then(count => count === 1)`);
+  await evaluate(sessionId, `smallslop.connection.server({op: 'debug', request: {op: 'install', className: 'Integer', source: 'tripledForTest ^self * 3'}}) && null`);
+  await until(sessionId, `smallslop.workspace.world.runtime.classes.get('Integer').methods.has('tripledForTest')`);
   await evaluate(sessionId, `smallslop.command({op: 'browse', action: 'reveal', className: 'Note'}) && null`);
   await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: directory });
   await evaluate(sessionId, `${browserButton('File out')}.click()`);
@@ -266,7 +270,7 @@ try {
   await until(sessionId, `globalThis.smallslop && ${idle}`);
   assert.equal(await evaluate(sessionId, `smallslop.workspace.world.panes.get('system-browser').object.slots.x`), 300);
   assert.ok(calls.some(call => call.name === 'smallslop_server'));
-  console.log('Chromium passed the workspace agent, page command, class definition, file in and out, source file saving, stop on signal, server database, component, reconnect, interrupt, reset, and arrangement tests.');
+  console.log('Chromium passed the workspace agent, page command, class definition, file in and out, source file saving and sharing, stop on signal, server database, component, reconnect, interrupt, reset, and arrangement tests.');
 } finally {
   const exit = browser?.exitCode === null ? new Promise(resolve => browser.once('exit', resolve)) : Promise.resolve();
   if (cdp) { await cdp.send('Browser.close'); await cdp.close(); }

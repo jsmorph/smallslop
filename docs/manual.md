@@ -559,15 +559,10 @@ failures}`, and each failure names its file.
 | Function | Module | Result |
 | --- | --- | --- |
 | `readPackageSync(name, root)`, `readPackage(name, root)` | [`server/source-files.mjs`](../server/source-files.mjs) | The package's files as `{name, text, version}`, sorted by name.  `root` defaults to the repository's `smalltalk/` directory. |
-| `writeSourceFile(root, name, file, text, expectedVersion)` | `server/source-files.mjs` | Write a file if its current version is `expectedVersion`, or `null` for a new file, and return the new version |
 | `fetchSources(names)` | [`ui/sources.js`](../ui/sources.js) | Fetch packages from `/api/smalltalk/<name>` on the page's server and return `{name: files}` |
-| `sourceWriter(base)` | `ui/sources.js` | A write function for `SourceStore` that sends `PUT` to the page's server |
 
-A version is the SHA-256 digest of the file text in base64url.  A write whose
-expected version differs from the file's current version fails with `status`
-412 and the current `version`.  The server process runs writes to one file in
-order, so two writers that read the same version cannot both succeed.  The
-Web server and the test server in `scripts/browser.js` answer
+A version is the SHA-256 digest of the file text in base64url.  The Web
+server and the test server in `scripts/browser.js` answer
 `GET /api/smalltalk/<name>`.
 
 ```js
@@ -582,25 +577,59 @@ console.log(loadSources(runtime, readPackageSync('tools')).classes);
 The output is `[ 'Inspector' ]`.
 
 `runtime.subscribe(listener)` calls `listener(klass)` after a class is
-defined or redefined and after a method is installed in the class or its
-metaclass, and returns a function that ends the subscription.  `new
-SourceStore({runtime, packages, write, report, label, defaultPackage})` in
-`src/sources.js` uses it to save a runtime's changes.  It records the package
-and version of each class loaded from `packages`.  After a change, it calls
-`write(packageName, fileName, fileOut(klass), version)` when the text differs
-from the saved text, and `write` returns the new version.  `adopt(klass,
-packageName)` gives a new class a file, in `defaultPackage` unless another
-package is named.  A class with no file, such as a component class, is not
-saved.  When `write` fails with `status` 412, the store reports the conflict
-through `report`, naming the runtime by `label`, stops saving that class, and
-leaves the file as it is.  `settled()` waits for pending writes, and
-`dispose()` ends the subscription.
+defined or redefined and after a method is installed in or removed from the
+class or its metaclass, and returns a function that ends the subscription.
+`runtime.removeMethod(klass, selector)` removes a method.
 
-The page and the server runtime each save their own changes.
-`createWorkspace` creates a store with `sourceWriter()` as
-`workspace.sources`, and the System Browser adopts the classes it defines or
-files in, in the `workspace` package.  `ServerWorld` creates a store that
-calls `writeSourceFile` in the server process.
+The server process writes every source file, and each runtime keeps its
+classes equal to their files.  `new SourceFiles(root)` in
+`server/source-files.mjs` serves one sources directory.  `readSync(name)` and
+`read(name)` read a package.  `write(name, file, text, expectedVersion)` writes
+a file when its current version is `expectedVersion`, or `null` for a new
+file, and returns the new version.  It runs the writes to one file in order,
+so two writers that read the same version cannot both succeed.
+`subscribe(packages, listener)` takes the versions a runtime holds, as
+`{name: [{name, version}]}`, and calls `listener({packageName, name, text,
+version})` with each file whose version differs, then with every version that
+a later write produces in those packages.  When a write fails with `status`
+412, the subscribers first receive the current file, so a writer always
+learns the version that defeated it.
+
+`new SourceStore({runtime, packages, report, label, defaultPackage, loaded})`
+in `src/sources.js` keeps one runtime and its files equal.  It records the
+package and version of each class loaded from `packages`.  `attach(write)`
+gives it a function `write(packageName, fileName, text, version)` that
+returns the new version, and `detach()` removes it while a connection is
+down.  After a change to a class with a file, the store calls `write` with
+`fileOut(klass)` when the text differs from the saved text.
+`receive(update)` takes a file from `subscribe`: the store ignores its own
+writes, loads other versions with `loadClassFile`, and calls `loaded`.  When
+the runtime had unsaved changes to that class, `report` receives an error that
+names the runtime by `label` and says the changes are lost.  A file that does
+not load is reported, and the store stops saving that class until a version
+of its file loads.  `versions()` returns the versions for `subscribe`,
+`adopt(klass, packageName)` gives a new class a file in `defaultPackage`
+unless another package is named, and `settled()` waits for pending writes.
+A class with no file, such as a component class, is not saved.
+
+`loadClassFile(runtime, {name, text})` makes a class equal to its file.  It
+defines or redefines the class, installs each method whose source or protocol
+differs, and removes source methods that the file does not contain.  Methods
+that keep their source and protocol keep their identity, so their breakpoints
+stay set.  Primitives stay installed.  When a method fails to compile, the
+function returns the failures and removes nothing.
+
+| Runtime | Writes through | Receives files through |
+| --- | --- | --- |
+| Page | `sources.write` on the session WebSocket | `sources.subscribe` and `source` messages on the same WebSocket |
+| Server runtime of a page (`ServerWorld`) | `SourceFiles.write` | `SourceFiles.subscribe` |
+| Server component runtime | A `source.write` message to the server process | `source` messages from the server process |
+
+Each runtime writes and receives on one ordered channel, so the reply to a
+write never arrives before an update that the server sent earlier.
+`createWorkspace` creates the page's store as `workspace.sources`, and the
+System Browser adopts the classes it defines or files in, in the `workspace`
+package.
 
 ## Exceptions
 
@@ -1399,10 +1428,11 @@ code](../examples/repair.js) that `npm run demo` runs in Node.
 
 `ServerWorld` in [`server/world.mjs`](../server/world.mjs) is a Smallslop
 runtime for Node with a `Database` object.  `new ServerWorld(path,
-{sourceRoot, report})` reads its packages from `sourceRoot`, which defaults to
-the repository's `smalltalk/` directory, and writes each class change back to
-that class's file.  It calls `report(error)` when a write fails, and `close()`
-waits for pending writes.  It opens the SQLite database at `path`, or a
+{sources, report})` reads its packages from `sources`, a `SourceFiles`, writes
+each class change back to that class's file, and loads the files that other
+runtimes write (see [Source packages](#source-packages)).  It calls
+`report(error)` when a file does not save or load, and `close()` waits for
+pending writes.  It opens the SQLite database at `path`, or a
 private in-memory database for `:memory:`.
 SQL runs in a separate process, so the server debugger can respond while a
 statement runs.  [Agent and Web Server](agent.md#server-commands) lists the

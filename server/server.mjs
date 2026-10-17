@@ -6,9 +6,8 @@ import { acceptWebSocket } from './ws.mjs';
 import { ServerWorld } from './world.mjs';
 import { ComponentService } from './component-service.mjs';
 import { errorData } from '../components/values.js';
-import { readPackage, sourceRoot as defaultSourceRoot, writeSourceFile } from './source-files.mjs';
+import { SourceFiles, sourceRoot as defaultSourceRoot } from './source-files.mjs';
 
-const maxSourceBytes = 4 * 1024 * 1024;
 const loopback = address => address === '::1' || /^(::ffff:)?127\./.test(address);
 const remoteError = data => Object.assign(new Error(typeof data?.message === 'string' ? data.message : 'The peer reported an invalid error.'),
   data && typeof data === 'object' ? data : {});
@@ -19,9 +18,14 @@ const types = {
 };
 
 export function createSmallslopServer({ root, directories, index, databasePath = ':memory:', sourceRoot = defaultSourceRoot, createAgent, components: componentOptions }) {
-  const components = componentOptions ? new ComponentService({ ...componentOptions, sourceRoot }) : null;
-  const allowed = directories.map(directory => resolve(root, directory) + sep);
+  const sources = new SourceFiles(sourceRoot);
   const clients = new Set();
+  const report = error => {
+    if (!clients.size) server.emit('error', error);
+    for (const client of clients) client.report(error);
+  };
+  const components = componentOptions ? new ComponentService({ ...componentOptions, sources, report }) : null;
+  const allowed = directories.map(directory => resolve(root, directory) + sep);
   const validHost = request => {
     const bound = server.address();
     if (!bound) return false;
@@ -29,42 +33,14 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     const names = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`];
     return !loopback(address) || names.includes(request.headers.host);
   };
-  const sameOrigin = request => !request.headers.origin
-    || [`http://${request.headers.host}`, `https://${request.headers.host}`].includes(request.headers.origin);
-  const putSource = async (request, response, packageName, file) => {
-    if (!sameOrigin(request)) { response.writeHead(403); response.end('Same origin required'); return; }
-    const match = request.headers['if-match'];
-    const absent = request.headers['if-none-match'] === '*';
-    if (!match === !absent) { response.writeHead(428, { 'Content-Type': 'text/plain' }); response.end('Send If-Match with the version read, or If-None-Match: * for a new file.'); return; }
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of request) {
-      size += chunk.length;
-      if (size > maxSourceBytes) { response.writeHead(413, { 'Content-Type': 'text/plain' }); response.end('Source file too large'); return; }
-      chunks.push(chunk);
-    }
-    const expected = absent ? null : /^"([A-Za-z0-9_-]+)"$/.exec(match)?.[1];
-    if (expected === undefined) { response.writeHead(400, { 'Content-Type': 'text/plain' }); response.end('Invalid If-Match header'); return; }
-    try {
-      const version = await writeSourceFile(sourceRoot, packageName, file, Buffer.concat(chunks).toString('utf8'), expected);
-      response.writeHead(204, { ETag: `"${version}"` });
-      response.end();
-    } catch (error) {
-      if (error.status !== 412) throw error;
-      response.writeHead(412, { 'Content-Type': 'text/plain', ...(error.version ? { ETag: `"${error.version}"` } : {}) });
-      response.end(error.message);
-    }
-  };
   const server = createServer(async (request, response) => {
     try {
       if (!validHost(request)) { response.writeHead(403); response.end('Local host required'); return; }
       const { pathname } = new URL(request.url, 'http://localhost');
-      const sources = /^\/api\/smalltalk\/([^/]+)$/.exec(pathname);
-      const sourceFile = /^\/api\/smalltalk\/([^/]+)\/([^/]+)$/.exec(pathname);
-      if (sourceFile && request.method === 'PUT') { await putSource(request, response, sourceFile[1], sourceFile[2]); return; }
       if (request.method !== 'GET') { response.writeHead(405); response.end('GET required'); return; }
-      if (sources) {
-        const files = await readPackage(sources[1], sourceRoot);
+      const sourcePackage = /^\/api\/smalltalk\/([^/]+)$/.exec(pathname);
+      if (sourcePackage) {
+        const files = await sources.read(sourcePackage[1]);
         response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         response.end(JSON.stringify(files));
         return;
@@ -115,7 +91,9 @@ export function createSmallslopServer({ root, directories, index, databasePath =
     let closed = false;
     let nextCommand = 1;
     const send = message => { if (!closed) connection.send(JSON.stringify(message)); };
-    const world = new ServerWorld(databasePath, { sourceRoot, report: error => { if (closed) server.emit('error', error); else send({ type: 'error', error: errorData(error) }); } });
+    const reportToPage = error => { if (closed) server.emit('error', error); else send({ type: 'error', error: errorData(error) }); };
+    const world = new ServerWorld(databasePath, { sources, report: reportToPage });
+    let unsubscribeSources = null;
     const publish = () => send({ type: 'status', status: state.status, model: state.model });
     const append = event => {
       const message = { ...event, id: state.messages.length + 1 };
@@ -159,6 +137,19 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       if (message.type === 'server') {
         const result = await requestServer(message.command);
         send({ type: 'reply', id: message.id, result });
+        return;
+      }
+      if (message.type === 'sources.subscribe') {
+        unsubscribeSources?.();
+        unsubscribeSources = null;
+        const unsubscribe = await sources.subscribe(message.packages, update => send({ type: 'source', update }));
+        if (closed) unsubscribe(); else unsubscribeSources = unsubscribe;
+        send({ type: 'reply', id: message.id, result: null });
+        return;
+      }
+      if (message.type === 'sources.write') {
+        const version = await sources.write(message.packageName, message.file, message.text, message.version);
+        send({ type: 'reply', id: message.id, result: { version } });
         return;
       }
       if (message.type === 'components') {
@@ -214,10 +205,11 @@ export function createSmallslopServer({ root, directories, index, databasePath =
       send({ type: 'reply', id: message.id, result: state });
     };
     let disposing;
-    const client = { connection, dispose() {
+    const client = { connection, report: reportToPage, dispose() {
       disposing ??= (async () => {
         closed = true;
         interrupted = true;
+        unsubscribeSources?.();
         for (const finish of [...pending.values()]) finish(new Error('The page disconnected.'));
         try { await runner?.interrupt(); } finally {
           runner?.dispose();

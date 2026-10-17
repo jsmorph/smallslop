@@ -268,6 +268,12 @@ export class Runtime {
     return method;
   }
 
+  removeMethod(klass, selector) {
+    if (klass?.runtime !== this || !klass.methods.has(selector)) throw new Error(`${klass?.name} has no method ${selector}.`);
+    klass.methods.delete(selector);
+    this.#changed(klass);
+  }
+
   lookup(klass, selector) {
     for (let current = klass; current; current = current.superclass) {
       if (current.methods.has(selector)) return current.methods.get(selector);

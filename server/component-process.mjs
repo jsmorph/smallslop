@@ -3,17 +3,17 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CdpConnection, JavaScriptDebugger } from './debug-connection.mjs';
 import { errorData } from '../components/values.js';
-import { sourceRoot as defaultSourceRoot } from './source-files.mjs';
 
 export class ComponentProcess {
-  constructor({ directory, namespace, sourceRoot = defaultSourceRoot, remote, changed = () => {}, failed = () => {} }) {
+  constructor({ directory, namespace, sources, report, remote, changed = () => {}, failed = () => {} }) {
     this.identity = { namespace, runtime: 'server', incarnation: crypto.randomUUID() };
     const versions = `${pathToFileURL(path.join(directory, 'versions')).href}/`;
     this.pending = new Map();
     this.nextId = 1;
     this.error = null;
     this.debugger = null;
-    this.child = fork(new URL('./component-child.mjs', import.meta.url), [directory, namespace, this.identity.incarnation, sourceRoot], {
+    this.unsubscribeSources = () => {};
+    this.child = fork(new URL('./component-child.mjs', import.meta.url), [directory, namespace, this.identity.incarnation, sources.root], {
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'], execArgv: [],
     });
     const ready = Promise.withResolvers();
@@ -21,6 +21,7 @@ export class ComponentProcess {
     const fail = error => {
       if (this.error) return;
       this.error = error;
+      this.unsubscribeSources();
       failed(error);
       ready.reject(error);
       for (const pending of this.pending.values()) pending.reject(Object.assign(new Error(error.message), { outcomeUnknown: true }));
@@ -33,10 +34,18 @@ export class ComponentProcess {
         this.inspectorUrl = message.inspectorUrl;
         try {
           this.debugger = new JavaScriptDebugger(new CdpConnection(message.inspectorUrl), { sourceFilter: url => url.startsWith(versions) });
-          this.debugger.enable().then(() => ready.resolve(this.identity), fail);
+          const subscribed = sources.subscribe(message.sources, update => { this.send({ type: 'source', update }).catch(fail); })
+            .then(unsubscribe => { if (this.error) unsubscribe(); else this.unsubscribeSources = unsubscribe; });
+          Promise.all([subscribed, this.debugger.enable()]).then(() => ready.resolve(this.identity), fail);
         } catch (error) { fail(error); }
       } else if (message.type === 'changed') changed(message.event);
-      else if (message.type === 'result') {
+      else if (message.type === 'report') report(Object.assign(new Error(message.error.message), message.error));
+      else if (message.type === 'source.write') {
+        sources.write(message.packageName, message.file, message.text, message.version).then(
+          version => this.send({ type: 'result', id: message.id, result: version }),
+          error => this.send({ type: 'result', id: message.id, error: errorData(error) }),
+        ).catch(fail);
+      } else if (message.type === 'result') {
         const pending = this.pending.get(message.id);
         if (!pending) return;
         this.pending.delete(message.id);
@@ -68,6 +77,7 @@ export class ComponentProcess {
   }
 
   async close() {
+    this.unsubscribeSources();
     await this.debugger?.close();
     if (this.child.exitCode !== null || this.child.signalCode !== null) return;
     const exited = new Promise(resolve => this.child.once('exit', resolve));

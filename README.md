@@ -47,8 +47,9 @@ conversation, the System Browser, the Debugger, object inspectors, and
 installed components.  The agent operates the same objects as the user through
 page commands, a server Smallslop runtime with a SQLite database, and the
 component service.  The Disk example button installs a server component and a
-browser component and opens their pane.  The page and server runtimes save
-each change to a class to that class's file in [`smalltalk/`](smalltalk/).
+browser component and opens their pane.  Every runtime saves each change to a
+class to that class's file in [`smalltalk/`](smalltalk/), and the other
+runtimes load the new file.
 
 The agent requires a Pi model credential.  The server listens on `127.0.0.1`
 by default and has no authentication.  On another address, anyone who can

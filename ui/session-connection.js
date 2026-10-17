@@ -4,10 +4,11 @@ const remoteError = data => Object.assign(new Error(typeof data?.message === 'st
   data && typeof data === 'object' ? data : {});
 
 export class SessionConnection {
-  constructor({ command, session, error, open = () => {}, url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/session` }) {
+  constructor({ command, session, error, source = () => { throw new Error('This page has no source file subscription.'); }, open = () => {}, url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/session` }) {
     this.command = command;
     this.session = session;
     this.error = error;
+    this.source = source;
     this.open = open;
     this.url = url;
     this.pending = new Map();
@@ -47,7 +48,8 @@ export class SessionConnection {
           if (pending) {
             if (Object.hasOwn(message, 'error')) pending.reject(remoteError(message.error)); else pending.resolve(message.result);
           } else if (Object.hasOwn(message, 'error')) this.error(remoteError(message.error));
-        } else if (message.type === 'error') this.error(remoteError(message.error));
+        } else if (message.type === 'source') this.source(message.update);
+        else if (message.type === 'error') this.error(remoteError(message.error));
         else throw new Error(`Unknown server message: ${message.type}.`);
       } catch (error) { this.error(error); }
     });

@@ -6,13 +6,3 @@ export async function fetchSources(packages, base = new URL('/api/smalltalk/', l
   }));
   return Object.fromEntries(entries);
 }
-
-export function sourceWriter(base = new URL('/api/smalltalk/', location.href)) {
-  return async (packageName, fileName, text, version) => {
-    const response = await fetch(new URL(`${packageName}/${fileName}`, base), {
-      method: 'PUT', body: text, headers: { 'Content-Type': 'text/plain; charset=utf-8', ...(version === null ? { 'If-None-Match': '*' } : { 'If-Match': `"${version}"` }) },
-    });
-    if (!response.ok) throw Object.assign(new Error(`${response.status} ${await response.text()}`), { status: response.status });
-    return response.headers.get('ETag').slice(1, -1);
-  };
-}

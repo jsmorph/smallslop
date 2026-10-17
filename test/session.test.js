@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { createServer, request as httpRequest } from 'node:http';
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { createSmallslopServer } from '../server/server.mjs';
 import { SessionConnection } from '../ui/session-connection.js';
 import { acceptWebSocket } from '../server/ws.mjs';
-import { sourceRoot } from '../server/source-files.mjs';
+import { readPackageSync, sourceRoot } from '../server/source-files.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -253,16 +253,34 @@ test('a connection whose unsent output exceeds its limit closes', { timeout: 100
   }
 });
 
-test('the page receives source file errors from its server runtime', async () => {
+test('a page subscribes to source files and writes them over its session', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'smallslop-root-'));
   await cp(sourceRoot, directory, { recursive: true });
   const { app, port } = await start({ sourceRoot: directory });
-  const { promise: reported, resolve } = Promise.withResolvers();
+  const updates = [];
+  const errors = [];
+  const until = async predicate => {
+    for (let attempt = 0; attempt < 200 && !predicate(); attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(predicate());
+  };
   try {
-    const connection = await connect(port, { error: resolve });
-    await writeFile(path.join(directory, 'kernel', 'Integer.st'), 'edited elsewhere');
+    const connection = await connect(port, { source: update => updates.push(update), error: error => errors.push(error) });
+    const kernel = readPackageSync('kernel', directory);
+    await connection.request('sources.subscribe', { packages: { kernel: kernel.map(({ name, version }) => ({ name, version })) } });
+    assert.deepEqual(updates, []);
     await connection.server({ op: 'debug', request: { op: 'install', className: 'Integer', source: 'doubledForTest ^self * 2' } });
-    assert.equal((await reported).message, "kernel/Integer.st changed after the server runtime read it.  The server runtime's changes to Integer are not saved.  Reload the page to load the current file.");
+    await until(() => updates.length === 1);
+    const integer = kernel.find(file => file.name === 'Integer.st');
+    assert.deepEqual([updates[0].packageName, updates[0].name], ['kernel', 'Integer.st']);
+    assert.match(updates[0].text, /\nInteger method!\ndoubledForTest \^self \* 2!\n/);
+    await assert.rejects(connection.request('sources.write', { packageName: 'kernel', file: 'Integer.st', text: 'stale', version: integer.version }),
+      error => error.status === 412);
+    assert.deepEqual(updates.map(update => update.version), [updates[0].version, updates[0].version]);
+    const broken = `${updates[0].text}\nInteger method!\nbroken ^(!\n`;
+    const { version } = await connection.request('sources.write', { packageName: 'kernel', file: 'Integer.st', text: broken, version: updates[0].version });
+    assert.equal(version, readPackageSync('kernel', directory).find(file => file.name === 'Integer.st').version);
+    await until(() => errors.length === 1);
+    assert.match(errors[0].message, /^The server runtime cannot load kernel\/Integer.st, so it does not save Integer: /);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

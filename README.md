@@ -8,6 +8,9 @@ development tools, a Node server runtime with a SQLite database, a Pi agent
 that operates a page, and a runtime for installed JavaScript components.
 Smallslop uses the [MIT License](LICENSE).
 
+<img width="1309" height="884" alt="image" src="https://github.com/user-attachments/assets/9d0f82e6-b4d5-47af-a04f-a8671967005d" />
+
+
 ## Using Smallslop in a project
 
 A project uses Smallslop by copying directories into its own tree.  The
